@@ -1,25 +1,36 @@
 {
   "expo": {
-    "name": "GeoSafe_scaffold",
-    "slug": "GeoSafe_scaffold",
+    "name": "GeoSafe",
+    "slug": "geosafe",
     "version": "1.0.0",
+    "scheme": "geosafe",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "ios": {
-      "supportsTablet": true
-    },
-    "android": {
-      "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
-      },
-      "predictiveBackGestureEnabled": false
+    "userInterfaceStyle": "automatic",
+    "runtimeVersion": {
+      "policy": "sdkVersion"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
-    }
+      "bundler": "metro"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.geosafe.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "GeoSafe uses your location to analyse seismic risk at your current position."
+      }
+    },
+    "android": {
+      "package": "com.geosafe.app",
+      "permissions": ["ACCESS_FINE_LOCATION"]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "GeoSafe needs your location for seismic risk analysis."
+        }
+      ]
+    ]
   }
 }
