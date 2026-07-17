@@ -41,4 +41,5 @@ yarn-error.*
 /android
 
 .claude
-
+CLAUDE.md
+.env
