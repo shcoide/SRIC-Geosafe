@@ -14,6 +14,23 @@ GeoSafe is a mobile application (React Native + Expo) paired with a Python FastA
 
 The risk engine is rule-based (no ML model needed to run it). The architecture is designed so a trained XGBoost model can be dropped in later without changing any other code. Every resolved hazard/site value carries a `source` field (`measured` / `interpolated` / `modeled` / `assumed` / `shapefile` / `approximate`) so the app never presents a geological guess with the same confidence as a calibrated measurement.
 
+## Screenshots
+
+<table>
+<tr>
+<td align="center"><img src="assets/screenshots/1.png" width="200"/><br/><sub>Search</sub></td>
+<td align="center"><img src="assets/screenshots/2.png" width="200"/><br/><sub>Analysing seismic risk</sub></td>
+<td align="center"><img src="assets/screenshots/3.png" width="200"/><br/><sub>Hazard overview — Guwahati (Zone V)</sub></td>
+<td align="center"><img src="assets/screenshots/4.png" width="200"/><br/><sub>Material recommendations — NEHRP Class E</sub></td>
+</tr>
+<tr>
+<td align="center"><img src="assets/screenshots/5.png" width="200"/><br/><sub>IS-code design guidelines</sub></td>
+<td align="center"><img src="assets/screenshots/6.png" width="200"/><br/><sub>Hazard overview — Bhuj (Gujarat)</sub></td>
+<td align="center"><img src="assets/screenshots/7.png" width="200"/><br/><sub>Material recommendations — NEHRP Class C</sub></td>
+<td align="center"><img src="assets/screenshots/8.png" width="200"/><br/><sub>Design guidelines — Bhuj</sub></td>
+</tr>
+</table>
+
 ---
 
 ## What Has Been Built
