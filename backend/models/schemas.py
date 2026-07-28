@@ -38,11 +38,27 @@ class AnalyzeResponse(BaseModel):
     name: str
     coordinates: dict
     seismicZone: str
-    pga: float
+    seismicZoneSource: str
+    bedrockPga: float
+    bedrockPgaSource: str
+    amplificationFactor: float
+    amplificationFactorSource: str
+    surfacePga: float
+    designBaseShearCoefficient: float
+    designBaseShearCoefficientSource: str
     vs30: float
-    siteClass: str
-    distanceToFault: float
+    vs30Source: str
+    siteClassVs30: str
+    siteClassVs30Source: str
+    siteClassSpt: Optional[str] = None
+    siteClassSptSource: Optional[str] = None
+    distanceToFault: Optional[float] = None
+    faultName: Optional[str] = None
+    faultSlipType: Optional[str] = None
+    faultNetSlipRate: Optional[str] = None
+    faultSource: Optional[str] = None
     liquefactionRisk: str
+    liquefactionRiskSource: str
     overallRisk: str
     hazards: List[HazardSummary]
     earthquakes: List[EarthquakeRecord]

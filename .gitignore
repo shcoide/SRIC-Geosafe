@@ -30,8 +30,9 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# environment files (all variants — never commit secrets)
+.env
+.env.*
 
 # typescript
 *.tsbuildinfo
@@ -42,4 +43,3 @@ yarn-error.*
 
 .claude
 CLAUDE.md
-.env

@@ -3,12 +3,22 @@ import { ScrollView, View, Text, StyleSheet, TouchableOpacity } from 'react-nati
 import { router } from 'expo-router';
 import { RiskBanner } from '../../components/RiskBanner';
 import { HazardCard } from '../../components/HazardCard';
+import { EmptyState } from '../../components/EmptyState';
 import { useLocationStore } from '../../store/useLocationStore';
 import { Colors } from '../../constants/colors';
 
 export default function ResultsOverview() {
   const result = useLocationStore((s) => s.currentResult);
-  if (!result) return null;
+  if (!result) {
+    return (
+      <EmptyState
+        title="No location selected"
+        message="Search for a location from the Search tab to see its hazard overview here."
+        actionLabel="Go to search"
+        onAction={() => router.replace('/(tabs)')}
+      />
+    );
+  }
 
   return (
     <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
@@ -20,7 +30,7 @@ export default function ResultsOverview() {
       <RiskBanner
         risk={result.overallRisk as any}
         zone={result.seismicZone}
-        pga={result.pga}
+        surfacePga={result.surfacePga}
         vs30={result.vs30}
       />
 
@@ -49,10 +59,12 @@ export default function ResultsOverview() {
           </Text>
           <Text style={styles.statLabel}>Max magnitude nearby</Text>
         </View>
-        <View style={styles.statBox}>
-          <Text style={styles.statNum}>{Math.round(result.distanceToFault)} km</Text>
-          <Text style={styles.statLabel}>Nearest active fault</Text>
-        </View>
+        {result.distanceToFault !== null && (
+          <View style={styles.statBox}>
+            <Text style={styles.statNum}>{Math.round(result.distanceToFault)} km</Text>
+            <Text style={styles.statLabel}>Nearest active fault</Text>
+          </View>
+        )}
         <View style={styles.statBox}>
           <Text style={styles.statNum}>{result.liquefactionRisk}</Text>
           <Text style={styles.statLabel}>Liquefaction risk</Text>

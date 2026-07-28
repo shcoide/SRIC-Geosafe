@@ -1,18 +1,30 @@
 import React from 'react';
 import { ScrollView, View, Text, StyleSheet } from 'react-native';
+import { router } from 'expo-router';
 import { useLocationStore } from '../../store/useLocationStore';
 import { MaterialCard } from '../../components/MaterialCard';
+import { EmptyState } from '../../components/EmptyState';
 import { Colors } from '../../constants/colors';
 
 export default function MaterialsScreen() {
   const result = useLocationStore((s) => s.currentResult);
-  if (!result) return null;
+  if (!result) {
+    return (
+      <EmptyState
+        icon="cube-outline"
+        title="No material recommendations"
+        message="Search for a location from the Search tab to see recommended construction materials here."
+        actionLabel="Go to search"
+        onAction={() => router.replace('/(tabs)')}
+      />
+    );
+  }
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} contentContainerStyle={styles.container}>
       <View style={styles.banner}>
         <Text style={styles.bannerLabel}>Recommendations based on</Text>
-        <Text style={styles.bannerMain}>IS 1893 Zone {result.seismicZone} · {result.overallRisk} risk · NEHRP Class {result.siteClass}</Text>
+        <Text style={styles.bannerMain}>IS 1893 Zone {result.seismicZone} · {result.overallRisk} risk · NEHRP Class {result.siteClassVs30}</Text>
       </View>
 
       <Text style={styles.sectionLabel}>Recommended structural systems</Text>

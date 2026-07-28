@@ -1,13 +1,14 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
-  StyleSheet, SafeAreaView, Alert
+  StyleSheet, Alert
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { SearchBar } from '../../components/SearchBar';
 import { LoadingOverlay } from '../../components/LoadingOverlay';
 import { useLocationStore } from '../../store/useLocationStore';
-import { analyzeLocation } from '../../services/api';
+import { analyzeLocation, describeApiError } from '../../services/api';
 import { searchLocations } from '../../services/geocoding';
 import { getCurrentCoordinates, reverseGeocode } from '../../services/location';
 import { SearchResult } from '../../types';
@@ -19,14 +20,17 @@ export default function HomeScreen() {
   const { loading, setLoading, setCurrentResult, addRecentSearch, recentSearches } =
     useLocationStore();
 
-  const handleSearch = useCallback(async (text: string) => {
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSearch = useCallback((text: string) => {
     setQuery(text);
-    if (text.length >= 3) {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (text.length < 3) { setSuggestions([]); return; }
+
+    debounceRef.current = setTimeout(async () => {
       const results = await searchLocations(text);
       setSuggestions(results);
-    } else {
-      setSuggestions([]);
-    }
+    }, 400);
   }, []);
 
   const handleSelect = useCallback(async (item: SearchResult) => {
@@ -43,7 +47,7 @@ export default function HomeScreen() {
       addRecentSearch(item);
       router.push(`/results/${result.locationId}`);
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Could not analyse this location. Make sure the backend is running.');
+      Alert.alert('Error', describeApiError(e));
     } finally {
       setLoading(false);
     }
