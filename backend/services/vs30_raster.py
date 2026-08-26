@@ -52,6 +52,11 @@ def load_raster():
     return _dataset
 
 
+def get_dataset():
+    """Returns the cached rasterio dataset handle, or None if unavailable/not yet opened."""
+    return _dataset if _open_attempted else load_raster()
+
+
 def read_vs30(lat: float, lon: float) -> Optional[float]:
     """
     Windowed single-pixel read of the global Vs30 raster at (lat, lon).

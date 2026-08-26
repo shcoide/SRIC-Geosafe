@@ -10,10 +10,19 @@ Resolution tiers (see services.inference.get_vs30):
   1. CALIBRATED_VS30_POINTS - a specific surveyed point within CALIBRATION_RADIUS_KM
   2. CITY_REGIONS           - interpolated across a known urban survey area
   3. regional geological default (services.inference._regional_default_vs30)
+
+Region geometry: each CITY_REGION used to be modelled as a circle
+(centre + radius_km). That's a poor fit for elongated cities — Guwahati runs
+along the Brahmaputra, so a circle wide enough to reach the city's east-west
+extent over-covers well north and south of the river. Regions now carry an
+explicit `geometry` field instead (see CityRegion), checked with shapely
+rather than a haversine radius test (services.inference / services.coverage).
+`lat`/`lon` remain as the region's centre, but only for map camera
+positioning — never for containment.
 """
 
 import math
-from typing import Optional, Tuple, TypedDict
+from typing import List, Literal, Optional, Tuple, TypedDict, Union
 
 CALIBRATION_RADIUS_KM = 2.0
 
@@ -29,11 +38,38 @@ class CalibratedSptPoint(TypedDict):
     site_class_spt: str
 
 
-class CityRegion(TypedDict, total=False):
-    name: str
+class LatLon(TypedDict):
     lat: float
     lon: float
-    radius_km: float
+
+
+class BboxGeometry(TypedDict):
+    type: Literal["bbox"]
+    north: float
+    south: float
+    east: float
+    west: float
+
+
+class PolygonGeometry(TypedDict):
+    type: Literal["polygon"]
+    vertices: List[LatLon]
+
+
+RegionGeometry = Union[BboxGeometry, PolygonGeometry]
+
+# "provisional_bbox"  - a declared rectangle, not derived from survey data
+# "survey_hull"       - a polygon traced from real calibrated survey points
+GeometrySource = Literal["provisional_bbox", "survey_hull"]
+
+
+class CityRegion(TypedDict, total=False):
+    name: str
+    state: str
+    lat: float  # centre — map camera positioning only, NOT used for containment
+    lon: float
+    geometry: RegionGeometry
+    geometrySource: GeometrySource
     vs30_min: float
     vs30_max: float
     site_class: Optional[str]
@@ -49,6 +85,111 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dlambda = math.radians(lon2 - lon1)
     a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
     return 2 * r * math.asin(math.sqrt(a))
+
+
+def region_polygon(region: CityRegion):
+    """Builds the shapely geometry for a region's declared bbox/polygon (lon, lat order)."""
+    from shapely.geometry import Polygon, box
+
+    geometry = region["geometry"]
+    if geometry["type"] == "bbox":
+        return box(geometry["west"], geometry["south"], geometry["east"], geometry["north"])
+    if geometry["type"] == "polygon":
+        return Polygon([(v["lon"], v["lat"]) for v in geometry["vertices"]])
+    raise ValueError(f"Unknown geometry type: {geometry['type']!r}")
+
+
+def region_contains(region: CityRegion, lat: float, lon: float) -> bool:
+    """True if (lat, lon) falls inside the region's declared geometry (bbox or polygon)."""
+    from shapely.geometry import Point
+
+    return region_polygon(region).contains(Point(lon, lat))
+
+
+def region_boundary_vertices(region: CityRegion) -> List[LatLon]:
+    """Ordered {lat, lon} vertices describing the region's outline, for map rendering."""
+    geometry = region["geometry"]
+    if geometry["type"] == "bbox":
+        n, s, e, w = geometry["north"], geometry["south"], geometry["east"], geometry["west"]
+        return [
+            {"lat": n, "lon": w}, {"lat": n, "lon": e},
+            {"lat": s, "lon": e}, {"lat": s, "lon": w},
+        ]
+    return list(geometry["vertices"])
+
+
+def region_bounds(region: CityRegion) -> dict:
+    """Axis-aligned bounding box of the region's geometry (bbox: itself; polygon: its envelope)."""
+    geometry = region["geometry"]
+    if geometry["type"] == "bbox":
+        return {"north": geometry["north"], "south": geometry["south"], "east": geometry["east"], "west": geometry["west"]}
+    west, south, east, north = region_polygon(region).bounds
+    return {"north": north, "south": south, "east": east, "west": west}
+
+
+def region_effective_radius_km(region: CityRegion) -> float:
+    """
+    Max distance from the region's centre to any vertex of its declared
+    geometry. Used only to normalise interpolation distance into [0, 1] for
+    the Vs30 min/max blend in get_vs30() — a stand-in for the old radius_km,
+    now that regions aren't literal circles. This is NOT a containment
+    boundary; region_contains() is authoritative for that.
+    """
+    vertices = region_boundary_vertices(region)
+    return max(haversine_km(region["lat"], region["lon"], v["lat"], v["lon"]) for v in vertices)
+
+
+def region_from_points(points: List[Tuple[float, float]], method: str = "concave", buffer_km: float = 1.0):
+    """
+    Builds a polygon geometry from real calibrated survey coordinates —
+    the intended replacement for a region's provisional bbox once enough
+    real survey points exist to trace an actual coverage extent.
+
+    NOT applied to any region yet. CALIBRATED_VS30_POINTS currently holds a
+    handful of placeholder points per city (illustrative estimates, per this
+    file's own docstring) — nowhere near enough to describe a real survey
+    boundary. Wire this in once real microzonation survey coordinates are
+    loaded for a city (see README, "What needs more thorough research"),
+    then set that region's geometrySource to "survey_hull".
+
+    Uses a concave hull (shapely.concave_hull), not a convex hull, because
+    real calibration coverage is rarely convex: surveyed points typically
+    trace settlement patterns, river corridors, or road networks rather than
+    filling a blob-shaped area. A convex hull would paper over the gaps
+    between points and silently claim coverage in unsurveyed areas between
+    them — the same "over-covers" failure mode this task replaces the
+    circle model for (Guwahati's Brahmaputra-following footprint is exactly
+    this shape: elongated and concave, not a disc).
+
+    Args:
+        points: (lat, lon) pairs — real calibrated survey coordinates, not
+            interpolation guesses.
+        method: only "concave" is implemented. Kept as an explicit parameter
+            rather than hardcoding the choice, so a future caller has to
+            deliberately opt into something else (e.g. "convex") instead of
+            silently getting a different shape than they asked for.
+        buffer_km: small outward buffer (in km, roughly converted to degrees)
+            so the boundary doesn't pass exactly through the outermost
+            survey points, which would place those points ON the edge
+            rather than inside it.
+
+    Returns:
+        A shapely Polygon (lon, lat coordinates) — pass its exterior
+        coordinates into a PolygonGeometry's `vertices` (as {lat, lon} dicts)
+        when wiring this into a CityRegion.
+    """
+    if method != "concave":
+        raise ValueError(f"Unsupported method: {method!r} — only 'concave' is implemented")
+    if len(points) < 4:
+        raise ValueError("Need at least 4 points to build a concave hull")
+
+    from shapely import concave_hull
+    from shapely.geometry import MultiPoint
+
+    multipoint = MultiPoint([(lon, lat) for lat, lon in points])
+    hull = concave_hull(multipoint, ratio=0.3)
+    buffer_deg = buffer_km / 111.0  # coarse km->degree conversion; fine at city scale
+    return hull.buffer(buffer_deg)
 
 
 # Individually surveyed points, keyed by (lat, lon).
@@ -76,56 +217,84 @@ CALIBRATED_SPT_POINTS: dict[Tuple[float, float], CalibratedSptPoint] = {
     # Maligaon and Dhol Gobinda have no SPT-N survey on record.
 }
 
-# City-scale interpolation areas. When a point falls within radius_km of more
-# than one region, the nearest region center wins (see services.inference).
+# City-scale interpolation areas. When a point falls within more than one
+# region's geometry, the nearest region centre wins (see services.inference).
+#
+# Every geometry below is a provisional bbox, derived from this region's
+# previous circle (centre + radius_km) via due-N/S/E/W projection, purely so
+# switching to the new schema didn't silently change what area counts as
+# covered. None of these rectangles come from an actual survey extent — they
+# are a placeholder pending real boundary data (see region_from_points()).
 CITY_REGIONS: list[CityRegion] = [
     {
         "name": "Guwahati",
+        "state": "Assam",
         "lat": 26.1445, "lon": 91.7362,
-        "radius_km": 15.0,
+        # Provisional bbox derived from the old circle (centre 26.1445,91.7362, radius 15km).
+        "geometry": {"type": "bbox", "north": 26.27989, "south": 26.00911, "east": 91.88621, "west": 91.58619},
+        "geometrySource": "provisional_bbox",
         "vs30_min": 220.0, "vs30_max": 280.0,
         "site_class": "D",
         "notes": "Brahmaputra valley alluvium. Most of the city is Class D; "
                  "see CALIBRATED_VS30_POINTS for softer Class E pockets and the "
-                 "'Guwahati South' region for the rockier southern hills.",
+                 "'Guwahati South' region for the rockier southern hills. "
+                 "Boundary is a provisional bbox, not a survey extent — "
+                 "Guwahati runs along the Brahmaputra, so a box this wide "
+                 "north-south likely over-covers away from the river.",
     },
     {
         "name": "Guwahati South",
+        "state": "Assam",
         "lat": 26.0500, "lon": 91.7800,
-        "radius_km": 6.0,
+        # Provisional bbox derived from the old circle (centre 26.0500,91.7800, radius 6km).
+        "geometry": {"type": "bbox", "north": 26.10416, "south": 25.99584, "east": 91.83995, "west": 91.72005},
+        "geometrySource": "provisional_bbox",
         "vs30_min": 280.0, "vs30_max": 340.0,
         "site_class": "C",
         "notes": "Basistha/Garbhanga hill outcrops south of the city — "
-                 "shallower, stiffer ground than the valley floor.",
+                 "shallower, stiffer ground than the valley floor. Boundary "
+                 "is a provisional bbox, not a survey extent.",
     },
     {
         "name": "Dehradun North",
+        "state": "Uttarakhand",
         "lat": 30.3800, "lon": 78.0700,
-        "radius_km": 10.0,
+        # Provisional bbox derived from the old circle (centre 30.3800,78.0700, radius 10km).
+        "geometry": {"type": "bbox", "north": 30.47020, "south": 30.28979, "east": 78.17404, "west": 77.96596},
+        "geometrySource": "provisional_bbox",
         "vs30_min": 200.0, "vs30_max": 700.0,
         "site_class": None,  # derive from interpolated Vs30 - spans multiple classes
         "notes": "Siwalik foothills / Doon gravel fans. Stiffer and far more "
-                 "variable than the valley floor, occasional rock outcrop.",
+                 "variable than the valley floor, occasional rock outcrop. "
+                 "Boundary is a provisional bbox, not a survey extent.",
     },
     {
         "name": "Dehradun South",
+        "state": "Uttarakhand",
         "lat": 30.2600, "lon": 77.9300,
-        "radius_km": 10.0,
+        # Provisional bbox derived from the old circle (centre 30.2600,77.9300, radius 10km).
+        "geometry": {"type": "bbox", "north": 30.35021, "south": 30.16979, "east": 78.03391, "west": 77.82609},
+        "geometrySource": "provisional_bbox",
         "vs30_min": 180.0, "vs30_max": 400.0,
         "site_class": None,
         "notes": "Doon valley floor toward the Song/Suswa rivers - softer "
-                 "alluvial fill than the northern foothills.",
+                 "alluvial fill than the northern foothills. Boundary is a "
+                 "provisional bbox, not a survey extent.",
     },
     {
         "name": "Bhuj",
+        "state": "Gujarat",
         "lat": 23.2420, "lon": 69.6669,
-        "radius_km": 20.0,
+        # Provisional bbox derived from the old circle (centre 23.2420,69.6669, radius 20km).
+        "geometry": {"type": "bbox", "north": 23.42259, "south": 23.06141, "east": 69.86233, "west": 69.47147},
+        "geometrySource": "provisional_bbox",
         "vs30_min": 220.0, "vs30_max": 300.0,
         "site_class": None,
         "notes": "Kutch basin fill shows no strong shallow impedance contrast, "
                  "so site response here is basin-resonance driven rather than a "
                  "sharp Vs30 boundary: HVSR studies report resonance around "
-                 "0.6-1.4 Hz with amplification factors of 1.5-4.4x.",
+                 "0.6-1.4 Hz with amplification factors of 1.5-4.4x. Boundary "
+                 "is a provisional bbox, not a survey extent.",
         "resonance_hz": (0.6, 1.4),
         "amplification": (1.5, 4.4),
     },

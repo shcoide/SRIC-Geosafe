@@ -30,7 +30,8 @@
         {
           "locationWhenInUsePermission": "GeoSafe needs your location for seismic risk analysis."
         }
-      ]
+      ],
+      "@maplibre/maplibre-react-native"
     ]
   }
 }

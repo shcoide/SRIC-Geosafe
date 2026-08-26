@@ -64,7 +64,7 @@ The React Native project was created using `create-expo-app` with the `blank-typ
 | `expo-status-bar` | ~56.0.4 | Controls iOS/Android status bar style |
 | `react-native-safe-area-context` | ~5.7.0 | Handles notch/home-indicator safe areas |
 | `react-native-screens` | 4.25.2 | Native screen containers (required by Router) |
-| `react-native-maps` | 1.27.2 | Map view with markers and circles |
+| `@maplibre/maplibre-react-native` | 10.4.2 (pinned) | Map rendering — see "Coverage Map Screen" for why this version, not `react-native-maps` |
 | `zustand` | ^5.0.14 | Lightweight global state management |
 | `axios` | ^1.18.1 | HTTP client for FastAPI calls |
 | `@react-native-async-storage/async-storage` | ^3.1.1 | Persistent key-value storage |
@@ -127,12 +127,14 @@ GeoSafe/
 │   ├── colors.ts                 ← Design system colour tokens
 │   └── riskConfig.ts             ← Zone labels, risk-level colour mappings, hazard icons
 ├── scripts/
-│   └── validate_vs30.py          ← Compares the global Vs30 raster against calibrated boreholes
+│   ├── validate_vs30.py          ← Compares the global Vs30 raster against calibrated boreholes
+│   └── check_build_data.py       ← Render build-time gate: fails the build if required data files are missing/empty
 ├── backend/
-│   ├── main.py                   ← FastAPI app entry point + CORS middleware + startup loaders
+│   ├── main.py                   ← FastAPI entry point: CORS, rate limiting, error logging, startup loaders, /health
+│   ├── rate_limit.py             ← Shared slowapi Limiter instance (avoids a circular import with routers/analyze.py)
 │   ├── requirements.txt          ← Python dependency list
 │   ├── routers/
-│   │   └── analyze.py            ← POST /api/analyze route handler
+│   │   └── analyze.py            ← POST /api/analyze route handler (rate-limited, 20/min per IP)
 │   ├── services/
 │   │   ├── usgs.py               ← Fetches earthquakes from USGS FDSN API
 │   │   ├── inference.py          ← Rule-based IS 1893 zone + PGA + Vs30 + risk engine
@@ -144,10 +146,11 @@ GeoSafe/
 │   │   └── global_vs30/          ← (not bundled) place the real USGS Global Vs30 GeoTIFF here
 │   └── models/
 │       └── schemas.py            ← Pydantic request/response models
-├── app.json                      ← Expo app configuration
+├── app.json                      ← Expo app configuration (static — no env-dependent native config needed)
 ├── package.json                  ← npm dependencies and scripts
 ├── tsconfig.json                 ← TypeScript compiler config
-└── .env                          ← API URL and OpenCage key (not committed to git)
+├── .env.example                  ← Template for .env/.env.local (committed; real keys are not)
+└── .env                          ← API URL (not committed to git)
 ```
 
 ---
@@ -201,7 +204,7 @@ Zustand store, wrapped in `persist` with `createJSONStorage(() => AsyncStorage)`
   4. Final fallback: `http://localhost:8000/api`
   - Logs the resolved URL once at module load (`console.log`, `__DEV__` only) so it's visible in the Metro console.
 - Exports `describeApiError(error)` — Axios' bare "Network Error" isn't actionable, so this turns a response-less Axios error into a message naming the resolved base URL and the required `--host 0.0.0.0` flag; any other error just passes its message through.
-- Exports `analyzeLocation(params)` which POSTs `{ lat, lon, location_name, floors, building_type }` to the backend and returns a typed `LocationResult`
+- Exports `analyzeLocation(params)` which POSTs `{ lat, lon, location_name, floors, building_type }` to the backend and returns a typed `LocationResult`. Also stashes `params` as the module-level "last analyze request", readable via `getLastAnalyzeRequest()` — used only by `ErrorBoundary.tsx` to attach recent-request context to a crash log, never for anything functional.
 
 | Test target | Backend URL used | Why |
 |---|---|---|
@@ -242,7 +245,7 @@ One IS-code-referenced design guideline row: category label, recommendation, det
 Shared placeholder shown by all four `app/results/*` screens when `currentResult` is `null` (e.g. after an app restart, since `currentResult` is deliberately not persisted). Takes an icon, title, message, and an optional action button — each screen wires the button to `router.replace('/(tabs)')` to send the user back to Search.
 
 #### `components/ErrorBoundary.tsx`
-A class-component error boundary (`getDerivedStateFromError` / `componentDidCatch`) wrapping the root `<Stack>` in `app/_layout.tsx`. Catches otherwise-uncaught render errors anywhere in the app and shows a "Try again" reset button instead of a blank white screen.
+A class-component error boundary (`getDerivedStateFromError` / `componentDidCatch`) wrapping the root `<Stack>` in `app/_layout.tsx`. Catches otherwise-uncaught render errors anywhere in the app and shows a "Try again" reset button instead of a blank white screen. `componentDidCatch` logs a single structured, grep-able line — `[GEOSAFE_CRASH] component=... message=... lastAnalyzeRequest=... stack=...` — pulling the failing component's name out of `info.componentStack` and the most recent `analyzeLocation()` request (if any) from `services/api.ts`'s `getLastAnalyzeRequest()`, so a "the app crashed" report carries real debugging context. This is deliberately just a structured `console.error`, not a crash-reporting SDK (this is a research prototype); it lands in the Metro/device console, not Render, since the frontend doesn't run on Render — only `backend/main.py`'s `GEOSAFE_ERROR` lines do.
 
 #### `components/LoadingOverlay.tsx`
 Full-screen centred spinner shown while the backend call is in progress.
@@ -265,8 +268,18 @@ The bottom tab bar. Three tabs: Search (magnify icon), Map (map-outline icon), R
 - Also shows recent searches when the input is empty
 - Shows `LoadingOverlay` while the API call is running
 
-#### `app/(tabs)/map.tsx` — Seismic Map Screen
-Shows a `MapView` centred on the last analysed location (or a default India view). Places a `Marker` at the location and a `Circle` with 300 km radius to visualise the earthquake search area. A hint banner appears when no location has been searched yet.
+#### `app/(tabs)/map.tsx` — Coverage Map Screen
+Fetches `/api/coverage` on mount and renders every region as a `FillLayer`+`LineLayer` pair over a `ShapeSource` (dashed line for a provisional bbox, solid for a real survey-derived boundary — see `geometrySource`) plus a `CircleLayer` per calibrated point (fixed 20px radius — MapLibre's `circleRadius` is in screen pixels, not metres, so a true-to-scale circle needs per-zoom expression math this app doesn't do), both colour-coded via `SOURCE_COLORS`. Tapping the map drops a draggable `PointAnnotation` and calls `/api/coverage/check` (debounced 300ms on drag) to show a bottom sheet with the expected data source and a "Run full analysis" action. Region chips above the map pan/zoom to a region's real bounds via the `Camera` ref's `fitBounds()`.
+
+**Map renderer**: this app uses [MapLibre](https://maplibre.org/) (`@maplibre/maplibre-react-native`), not `react-native-maps` — specifically because `react-native-maps` requires the Google Play Services Maps SDK as its native renderer on Android *regardless of tile source* (a custom tile overlay like `UrlTile` only draws on top of that renderer, it doesn't replace it), which means a mandatory Google Cloud project and API key just to see a map at all. MapLibre is a fully independent open-source renderer (a fork of Mapbox GL Native from before Mapbox's licence change) with no such requirement, on either platform.
+
+**Map tiles**: rendered via our own `RasterSource`/`RasterLayer` (not a hosted MapLibre demo style, so there's no dependency on MapLibre's own servers either). Two options, both OSM-based:
+- **MapTiler** (`https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=...`) if `EXPO_PUBLIC_MAPTILER_KEY` is set — free tier is 100,000 map loads/month, an account is required but **no billing/credit card**. Get a key at [maptiler.com](https://www.maptiler.com/) (Cloud → Keys).
+- **Plain OpenStreetMap** (`https://tile.openstreetmap.org/{z}/{x}/{y}.png`) if the key is left unset — needs no signup at all. This is the zero-setup path for offline/CI use, and the fallback if you never configure MapTiler.
+
+Neither path needs a Google Cloud project, billing account, or `android.config.googleMaps` block in `app.json` — and there isn't one.
+
+OSM's [tile usage policy](https://operations.osmfoundation.org/policies/tiles/) is meant for light, non-production use — it asks for a descriptive `User-Agent` identifying the app (not the default RN/OkHttp one, which this app does not currently set for the OSM fallback path — worth fixing before any real traffic) and prohibits bulk/automated tile downloading. The `© OpenStreetMap contributors` line in the map legend is required either way by OSM's data licence (ODbL), not optional styling — MapTiler's own style still derives from OSM data. If this app sees real traffic, use the MapTiler path (or another paid provider / self-hosted tiles) rather than hammering OSM's free public server directly.
 
 #### `app/(tabs)/history.tsx` — Recent Searches Screen
 Reads `recentSearches` from the Zustand store and renders them as a tappable list. Tapping re-runs the analysis for that location and navigates to the results.
@@ -291,10 +304,16 @@ Shows a banner summarising the basis for recommendations (using the Vs30-based s
 Maps `result.guidelines` to `<GuidelineItem>` rows — IS-code-referenced design rules (foundation type, column steel ratio, beam-column joint design, roof weight, infill wall gaps), each with a category label, recommendation, detail text, and IS code badge.
 
 #### `backend/main.py`
-FastAPI application entry point. Registers CORS middleware (allows all origins — suitable for development), includes the `analyze` router under the `/api` prefix, exposes a `/health` endpoint, and runs two `@app.on_event("startup")` hooks so the IS 1893 zone shapefile and the Vs30 GeoTIFF are opened once at process start rather than per request: `load_zones()` (`data/zone_loader.py`) and `load_raster()` (`services/vs30_raster.py`).
+FastAPI application entry point.
+
+- **CORS**: origins come from `CORS_ALLOWED_ORIGINS` (comma-separated) if set, otherwise default to just the Expo dev client/web preview's localhost origins — never a wildcard by default. See [Deploying the Backend (Render)](#deploying-the-backend-render) for why `*` is a deliberate, documented option in production for this specific app (public, read-only, no auth), not a default.
+- **Rate limiting**: wires up the shared `slowapi` limiter (`rate_limit.py`) — see `routers/analyze.py`, which is the only endpoint actually decorated with a limit.
+- **Error logging**: one `@app.exception_handler(Exception)` catches anything not already handled by FastAPI's own HTTPException/validation-error paths, and logs a single grep-able `GEOSAFE_ERROR` line (path, client IP, request body, full traceback) before returning a clean 500. A small `@app.middleware("http")` (`_capture_request_body`) captures each request's raw body up front so it's still readable from that handler — Starlette can't re-read a body stream the route already consumed.
+- **Startup loaders**: three `@app.on_event("startup")` hooks each wrap their loader (`load_zones()` in `data/zone_loader.py`, `load_raster()` in `services/vs30_raster.py`, `load_faults()` in `services/faults.py`) in its own `try`/`except` so a failure in any one can never crash app boot — each loader already catches its own errors internally too, so this is a second, independent line of defense.
+- **`GET /health`** returns `{status, message, dataSources: {seismicZones, vs30Raster, activeFaults}}` — the three booleans report whether each dataset is actually loaded right now, so a broken deploy (missing file, failed load) is visible immediately from this one endpoint instead of only being discovered when a user's `/analyze` silently degrades to fallback values.
 
 #### `backend/routers/analyze.py`
-Single route: `POST /api/analyze`. Orchestrates all backend services:
+Single route: `POST /api/analyze`, rate-limited to 20 requests/minute per client IP via `@limiter.limit(...)` (`rate_limit.py`) — this is by far the most expensive endpoint (shapefile query + raster read + fault geometry + a live USGS call), so it's the one guarded against a retry loop or accidental double-tap. Exceeding the limit returns `429` with a clear JSON message and an accurate `Retry-After` header (computed from the actual rate-limit window, not a hardcoded guess). Orchestrates all backend services:
 1. Resolves the IS 1893 zone (shapefile point-in-polygon, or the bounding-box fallback)
 2. Resolves Vs30 and the Vs30-based site class (calibrated point → city interpolation → global raster → regional default)
 3. Resolves the SPT-N-based site class independently, if a calibrated point exists (else `null`)
@@ -375,7 +394,17 @@ Calibrated reference data used by `get_vs30()` and `get_site_class_spt()`:
   Gobinda) — all three cases are deliberate, to exercise the "not an error" disagreement path.
 - `CITY_REGIONS` — city-scale Vs30 interpolation areas (Guwahati, Guwahati South, Dehradun North,
   Dehradun South, Bhuj), each with a Vs30 range and, where known, an explicit site class or HVSR
-  `amplification`/`resonance_hz` range (Bhuj).
+  `amplification`/`resonance_hz` range (Bhuj). Regions carry a `geometry` field (`bbox` or
+  `polygon`) rather than a circle — a circle is a poor fit for elongated cities (Guwahati runs
+  along the Brahmaputra; a radius wide enough to reach its east-west extent over-covers north and
+  south of the river). `geometrySource` marks whether that geometry is a `"provisional_bbox"`
+  (a declared rectangle, not derived from survey data — true of every region right now) or a
+  `"survey_hull"` (traced from real calibrated points via `region_from_points()`, not yet used
+  anywhere — today's calibrated points are illustrative placeholders, nowhere near enough to trace
+  a real extent). Containment (`region_contains()`) and rendering (`region_boundary_vertices()`,
+  `region_bounds()`) go through shapely against the declared geometry, not a haversine radius test;
+  `region_effective_radius_km()` is a distance-normalisation helper for the Vs30 min/max
+  interpolation blend only — it is not used for containment.
 - `haversine_km()` — great-circle distance helper used by all the lookups above.
 
 #### `backend/data/zone_loader.py`
@@ -415,12 +444,14 @@ Pydantic v2 models for strict request validation and response serialisation:
   `liquefactionRiskSource`, `seismicZoneSource`, `designBaseShearCoefficientSource`)
 - Plus sub-models for each nested object (hazard, earthquake, material, guideline)
 
-#### `.env`
+#### `.env.example`
+Committed template listing every variable the app reads, with placeholder values — copy it to `.env` and/or `.env.local` and fill in real values:
 ```
-EXPO_PUBLIC_API_URL=http://localhost:8000/api
-EXPO_PUBLIC_OPENCAGE_KEY=your_key_here
+EXPO_PUBLIC_API_URL=http://<lan-ip-or-host>:8000/api   # optional override, leave unset normally
+EXPO_PUBLIC_OPENCAGE_KEY=your_opencage_key_here         # free tier: https://opencagedata.com
+EXPO_PUBLIC_MAPTILER_KEY=your_maptiler_key_here         # optional — see "Coverage Map Screen" above
 ```
-Variables prefixed with `EXPO_PUBLIC_` are automatically injected into the React Native bundle. Replace `your_key_here` with a free OpenCage key (2,500 req/day free tier) from https://opencagedata.com.
+Variables prefixed with `EXPO_PUBLIC_` are automatically injected into the React Native bundle — that's every variable this app uses now. There's no build-time-only native secret anymore (the Google Maps API key `react-native-maps` used to need is gone along with that dependency), which is also why `app.config.js` no longer exists — `app.json`'s static config is enough.
 
 ---
 
@@ -484,8 +515,6 @@ Or press `i` in the Expo dev menu after running `npx expo start`.
 **Requirements:**
 - Xcode installed from the Mac App Store (already confirmed: `xcode-select -p` passes)
 - iOS Simulator app (comes with Xcode)
-
-**Known issue:** `react-native-maps` sometimes shows a blank map in the Simulator — this is a known Simulator limitation and works correctly on a real device.
 
 ---
 
@@ -568,11 +597,79 @@ Without a key, searching "Mumbai" will return a generic India-centre coordinate 
 
 1. Go to https://opencagedata.com and sign up (free, no credit card)
 2. Copy your API key from the dashboard
-3. Edit `.env`:
+3. Add it to `.env.local` (not `.env` — see the comments in `.env` for why):
    ```
    EXPO_PUBLIC_OPENCAGE_KEY=paste_your_key_here
    ```
 4. Restart the Expo bundler (`Ctrl+C` then `npx expo start` again)
+
+---
+
+## Getting a MapTiler API Key (Optional — Map Works Without One)
+
+The map screen falls back to plain OpenStreetMap raster tiles with zero setup, on both platforms — no Google Cloud project, no billing account, no API key of any kind is required to see a working map. MapTiler is purely an optional upgrade (nicer styling, MapTiler's own tile infrastructure instead of OSM's free public server).
+
+1. Go to [maptiler.com](https://www.maptiler.com/) and sign up (free, no credit card).
+2. Copy your API key from Cloud → Keys.
+3. Add it to `.env.local`:
+   ```
+   EXPO_PUBLIC_MAPTILER_KEY=paste_your_key_here
+   ```
+4. Restart the Expo bundler (`Ctrl+C` then `npx expo start` again) — this is a client-side runtime variable, not a native build secret, so no rebuild is needed.
+
+Free tier is 100,000 map loads/month.
+
+---
+
+## Deploying the Backend (Render)
+
+The backend is designed to run on Render's free tier (single 0.1 CPU instance, filesystem ephemeral between spin-downs, service sleeps after inactivity). A few things matter specifically because of that.
+
+### Start command
+
+Render assigns the port to listen on at runtime via the `PORT` environment variable — it is not fixed to `8000` in production, and a deploy that hardcodes `8000` will fail to bind to the port Render actually routes traffic to. Set Render's service **Start Command** to:
+
+```
+uvicorn main:app --host 0.0.0.0 --port $PORT
+```
+
+`backend/main.py` has no `if __name__ == "__main__":` block (there's no `python main.py` entry point at all — the app is only ever run via the `uvicorn` CLI, in every environment), so there's no in-code port default to keep in sync with this — `$PORT` here is the only place the port is decided for a deployed instance. `--host 0.0.0.0` is still required for the same reason it is locally (see "Terminal 1 — Start the Backend" below): Render's default network path won't reach a process bound to `127.0.0.1`.
+
+The `--port 8000 --host 0.0.0.0` command used elsewhere in this README (see "Terminal 1 — Start the Backend" and Quick Command Reference) is the **local-development version only** — `8000` is a fixed convenience default for running on your own machine, not something Render sets or reads. Don't use it as the Render start command.
+
+### Required data files
+
+`backend/data/is1893_zones/is1893_zones.shp` (+ its shapefile sidecar files) and `backend/data/global_vs30/global_vs30.tif` are **not bundled in this repo**. Without them, the app still runs — `get_is1893_zone()` and `get_vs30()` degrade to their documented bounding-box / regional-default fallbacks (see `backend/services/inference.py`) — but with lower-confidence results than the real datasets provide.
+
+If you do have these files, they must be **committed to the repo directly, or fetched as part of the build step — never left to be downloaded or generated at runtime.** Render's free tier filesystem is ephemeral between spin-downs: anything written or fetched while the process is running (rather than during the build) will silently be gone the next time the service cold-starts, and the app will quietly fall back to approximate results with no visible error, since both loaders are designed to degrade gracefully rather than crash.
+
+`scripts/check_build_data.py` exists to catch exactly this class of mistake at build time instead of in production. Add it as the first step of Render's build command:
+
+```
+python scripts/check_build_data.py && pip install -r backend/requirements.txt
+```
+
+It exits non-zero (failing the build loudly, in the build log) if either file is missing or empty. If you're intentionally running without these datasets (the fallback-only setup this repo ships with by default), don't add this check to the build command — it exists for deployments that are supposed to have the real data and want a broken/incomplete copy of it to be a build failure, not a silent runtime degradation.
+
+Once deployed, `GET /health` reports `dataSources: { seismicZones, vs30Raster, activeFaults }` — three booleans confirming what's actually loaded in the running process, independent of the build-time check.
+
+### CORS
+
+`backend/main.py` reads `CORS_ALLOWED_ORIGINS` (a comma-separated list of origins) from the environment. Set it in Render's dashboard under the service's Environment Variables. With it unset, the backend defaults to only the Expo dev client/web preview's localhost origins — safe for local development, but almost certainly not what you want for the actual deployed API (a browser-based client at some other origin wouldn't be able to call it).
+
+For this specific app, setting `CORS_ALLOWED_ORIGINS=*` in production is a legitimate, deliberate choice, not an oversight: GeoSafe's API is public, read-only, and requires no authentication, so there's no session/cookie/credential a malicious origin could exploit via a cross-origin request. It only needs to be an explicit choice made via this env var, not a silent default baked into the code. (Native iOS/Android requests never send an `Origin` header at all, so none of this affects the mobile app itself — CORS only matters for browser-originated requests.)
+
+### Rate limiting
+
+`POST /api/analyze` is capped at 20 requests/minute per client IP (`backend/routers/analyze.py`, via `slowapi` — `backend/rate_limit.py`). This is app-level protection, not a substitute for Render's own abuse protections; it exists specifically to stop one client's retry loop, a double-tapped button, or a runaway script from starving the single 0.1 CPU instance or burning through USGS's fair-use allowance (`backend/services/usgs.py`). A client that exceeds it gets a `429` with a clear message and a `Retry-After` header.
+
+### Error visibility
+
+Two things make a deployed crash debuggable from Render's log viewer alone, without reproducing it locally:
+- `backend/main.py`'s global exception handler logs one grep-able `GEOSAFE_ERROR` line per unhandled exception — request path, client IP, the raw request body (e.g. the exact payload that crashed `/analyze`), and the full traceback.
+- Rate-limit hits log a `GEOSAFE_RATE_LIMITED` line, so a spike of 429s (abuse, or just a traffic surge) is visible in the logs without waiting for a user to report it.
+
+`grep GEOSAFE_ERROR` (or `GEOSAFE_RATE_LIMITED`) against Render's log tail is the intended way to investigate a "something went wrong" report.
 
 ---
 
@@ -596,7 +693,7 @@ error boundary, and results-screen empty states (previously listed here) are now
 | Command | What it does |
 |---|---|
 | `source venv/bin/activate` | Activates the Python 3.11 virtual environment |
-| `uvicorn main:app --reload --port 8000 --host 0.0.0.0` | Starts FastAPI backend with auto-reload, reachable from the emulator/simulator/device |
+| `uvicorn main:app --reload --port 8000 --host 0.0.0.0` (**local dev only** — Render uses `--port $PORT`, no `--reload`; see [Deploying the Backend (Render)](#deploying-the-backend-render)) | Starts FastAPI backend with auto-reload, reachable from the emulator/simulator/device |
 | `npx expo start` | Starts Metro bundler, shows QR code |
 | `npx expo start --ios` | Starts and opens iOS Simulator directly |
 | `npx expo start --android` | Starts and opens Android Emulator directly |

@@ -55,5 +55,13 @@ def load_zones():
 
 
 def get_zones() -> Optional[object]:
-    """Returns the cached GeoDataFrame, or None if unavailable/not yet loaded."""
-    return _zones_gdf
+    """
+    Returns the cached GeoDataFrame. If load_zones() hasn't run yet (e.g. a
+    test or script calling get_is1893_zone() directly without going through
+    the FastAPI app's startup event), loads it lazily on first call instead
+    of returning None just because startup never fired — the same pattern
+    services.vs30_raster.read_vs30() and services.faults.nearest_fault() use
+    for their own caches, so "loader never ran" and "loader found nothing"
+    both resolve to the same fallback path, not two different ones.
+    """
+    return _zones_gdf if _load_attempted else load_zones()

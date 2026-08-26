@@ -33,6 +33,8 @@ yarn-error.*
 # environment files (all variants — never commit secrets)
 .env
 .env.*
+# ...except the template committed for new clones to copy from
+!.env.example
 
 # typescript
 *.tsbuildinfo
@@ -43,3 +45,11 @@ yarn-error.*
 
 .claude
 CLAUDE.md
+AGENTS.md
+/explanation
+
+# Python (backend)
+backend/venv/
+__pycache__/
+*.pyc
+.pytest_cache/

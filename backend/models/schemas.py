@@ -64,3 +64,51 @@ class AnalyzeResponse(BaseModel):
     earthquakes: List[EarthquakeRecord]
     materials: List[MaterialRecommendation]
     guidelines: List[ArchitecturalGuideline]
+
+class LatLon(BaseModel):
+    lat: float
+    lon: float
+
+class CoverageBounds(BaseModel):
+    north: float
+    south: float
+    east: float
+    west: float
+
+class CalibratedPointSummary(BaseModel):
+    name: str
+    lat: float
+    lon: float
+    radiusKm: float
+    hasSptData: bool
+
+class CoverageCounts(BaseModel):
+    calibratedPoints: int
+    withSptData: int
+
+class CoverageRegion(BaseModel):
+    id: str
+    name: str
+    state: str
+    seismicZone: str
+    center: LatLon
+    bounds: CoverageBounds
+    boundary: List[LatLon]
+    geometrySource: str
+    calibratedPoints: List[CalibratedPointSummary]
+    counts: CoverageCounts
+    dataQuality: str
+    notes: str
+
+class NearestRegion(BaseModel):
+    id: str
+    name: str
+    distanceKm: float
+    center: LatLon
+
+class CoverageCheckResult(BaseModel):
+    inCoverage: bool
+    regionId: Optional[str] = None
+    regionName: Optional[str] = None
+    expectedVs30Source: str
+    nearestRegion: Optional[NearestRegion] = None

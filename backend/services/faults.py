@@ -71,8 +71,17 @@ def load_faults():
 
 
 def get_faults():
-    """Returns the cached GeoDataFrame, or None if unavailable/not yet loaded."""
-    return _faults_gdf
+    """
+    Returns the cached GeoDataFrame. Loads it lazily on first call if
+    load_faults() hasn't run yet (e.g. GET /health called before/without the
+    FastAPI startup event, or a script using this module directly) rather
+    than returning None just because startup never fired — the same lazy
+    pattern nearest_fault() already uses for its own lookup, and that
+    data.zone_loader.get_zones() / services.vs30_raster.get_dataset() now
+    also use, so every "is this data source loaded" check in the app
+    behaves the same way regardless of caller.
+    """
+    return _faults_gdf if _load_attempted else load_faults()
 
 
 def _clean_str(value) -> Optional[str]:

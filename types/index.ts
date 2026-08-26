@@ -73,3 +73,53 @@ export interface SearchResult {
   lat: number;
   lon: number;
 }
+
+export interface CoverageBounds {
+  north: number;
+  south: number;
+  east: number;
+  west: number;
+}
+
+export interface CalibratedPointSummary {
+  name: string;
+  lat: number;
+  lon: number;
+  radiusKm: number;
+  hasSptData: boolean;
+}
+
+export interface CoverageCounts {
+  calibratedPoints: number;
+  withSptData: number;
+}
+
+export interface CoverageRegion {
+  id: string;
+  name: string;
+  state: string;
+  seismicZone: 'II' | 'III' | 'IV' | 'V';
+  center: Coordinates;
+  bounds: CoverageBounds;
+  boundary: Coordinates[];
+  geometrySource: 'provisional_bbox' | 'survey_hull';
+  calibratedPoints: CalibratedPointSummary[];
+  counts: CoverageCounts;
+  dataQuality: 'calibrated' | 'regional';
+  notes: string;
+}
+
+export interface NearestRegion {
+  id: string;
+  name: string;
+  distanceKm: number;
+  center: Coordinates;
+}
+
+export interface CoverageCheckResult {
+  inCoverage: boolean;
+  regionId: string | null;
+  regionName: string | null;
+  expectedVs30Source: SiteDataSource;
+  nearestRegion: NearestRegion | null;
+}

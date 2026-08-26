@@ -1,5 +1,5 @@
 import hashlib
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, Response
 from models.schemas import AnalyzeRequest, AnalyzeResponse
 from services.usgs import get_earthquakes
 from services.inference import (
@@ -8,11 +8,23 @@ from services.inference import (
     get_hazards, ZONE_RISK, estimate_fundamental_period_sec, get_design_base_shear_coefficient
 )
 from services.faults import nearest_fault
+from rate_limit import limiter
 
 router = APIRouter()
 
+# Bounds retries/double-taps from a single client and protects USGS
+# fair-use (services/usgs.py) plus the single 0.1 CPU Render instance this
+# runs on, since this is by far the most expensive endpoint in the app
+# (shapefile query + raster read + fault geometry + a live USGS call).
+ANALYZE_RATE_LIMIT = "20/minute"
+
+
 @router.post("/analyze", response_model=AnalyzeResponse)
-async def analyze_location(req: AnalyzeRequest):
+@limiter.limit(
+    ANALYZE_RATE_LIMIT,
+    error_message="Too many analysis requests from this IP — please wait before retrying.",
+)
+async def analyze_location(request: Request, response: Response, req: AnalyzeRequest):
     zone_result = get_is1893_zone(req.lat, req.lon)
     zone = zone_result.zone
     vs30_result = get_vs30(req.lat, req.lon)

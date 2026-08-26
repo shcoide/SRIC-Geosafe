@@ -13,6 +13,8 @@ from data.site_calibration import (
     CALIBRATION_RADIUS_KM,
     CITY_REGIONS,
     haversine_km,
+    region_contains,
+    region_effective_radius_km,
 )
 from data.zone_loader import get_zones, ZONE_FIELD
 from services.vs30_raster import read_vs30 as read_vs30_raster
@@ -93,15 +95,23 @@ def _find_calibrated_point(lat: float, lon: float) -> Optional[dict]:
     return best_point
 
 def _match_city_region(lat: float, lon: float) -> Optional[Tuple[dict, float]]:
-    """Nearest city region whose radius contains the point, with 0..1 distance fraction."""
+    """
+    Nearest city region whose declared geometry (bbox or polygon — see
+    data.site_calibration) actually contains the point, with a 0..1 distance
+    fraction for interpolation. Containment is a real shapely geometry test,
+    not a haversine-radius test — regions are no longer modelled as circles.
+    """
     best_region, best_dist = None, None
     for region in CITY_REGIONS:
+        if not region_contains(region, lat, lon):
+            continue
         dist = haversine_km(lat, lon, region["lat"], region["lon"])
-        if dist <= region["radius_km"] and (best_dist is None or dist < best_dist):
+        if best_dist is None or dist < best_dist:
             best_region, best_dist = region, dist
     if best_region is None:
         return None
-    frac = best_dist / best_region["radius_km"] if best_region["radius_km"] else 0.0
+    effective_radius = region_effective_radius_km(best_region)
+    frac = min(best_dist / effective_radius, 1.0) if effective_radius else 0.0
     return best_region, frac
 
 def _find_city_region(lat: float, lon: float) -> Optional[Tuple[float, str]]:

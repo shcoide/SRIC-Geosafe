@@ -14,6 +14,10 @@ async def get_earthquakes(lat: float, lon: float, radius_km: int = 300) -> List[
         "orderby": "magnitude",
     }
     try:
+        # Kept short and independent of the frontend's 60s Axios timeout
+        # (services/api.ts): a slow/unreachable USGS API should fail fast
+        # and fall back to the empty list below, not stall the whole
+        # /analyze response. Do not raise this past ~10-15s.
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(url, params=params)
             data = r.json()

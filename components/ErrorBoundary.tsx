@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../constants/colors';
+import { getLastAnalyzeRequest } from '../services/api';
 
 interface Props {
   children: React.ReactNode;
@@ -11,6 +12,16 @@ interface State {
   error: Error | null;
 }
 
+// React's componentStack is a multi-line string like:
+//   "\n    in HazardCard (created by ResultsScreen)\n    in View (created by ...)"
+// The first "in X" names the component the error actually originated in —
+// exactly what's needed to tell "which screen crashed" apart from "the app
+// crashed", which is otherwise not derivable from error.message alone.
+const extractComponentName = (componentStack: string): string => {
+  const match = componentStack.trim().match(/^in (\S+)/);
+  return match ? match[1] : 'unknown';
+};
+
 export class ErrorBoundary extends React.Component<Props, State> {
   state: State = { error: null };
 
@@ -19,7 +30,22 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error('Unhandled error caught by ErrorBoundary:', error, info.componentStack);
+    // This app has no crash-reporting SDK (deliberately — see README); this
+    // is a research prototype, and the frontend runs on a user's own
+    // device, not on Render, so this line lands in the Metro/device
+    // console, not Render's log viewer (only the backend's GEOSAFE_ERROR
+    // lines do — see backend/main.py). The [GEOSAFE_CRASH] prefix and flat
+    // key=value shape keep it grep-able wherever it's read from, and
+    // including the last analyzeLocation() request (if any) means a report
+    // of "it crashed" carries enough context to debug without asking the
+    // user to reproduce it.
+    const componentStack = info.componentStack ?? '';
+    const component = extractComponentName(componentStack);
+    const lastAnalyzeRequest = getLastAnalyzeRequest();
+    console.error(
+      `[GEOSAFE_CRASH] component=${component} message=${JSON.stringify(error.message)} ` +
+      `lastAnalyzeRequest=${JSON.stringify(lastAnalyzeRequest)} stack=${JSON.stringify(componentStack)}`
+    );
   }
 
   handleReset = () => this.setState({ error: null });
