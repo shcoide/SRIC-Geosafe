@@ -637,6 +637,10 @@ uvicorn main:app --host 0.0.0.0 --port $PORT
 
 The `--port 8000 --host 0.0.0.0` command used elsewhere in this README (see "Terminal 1 — Start the Backend" and Quick Command Reference) is the **local-development version only** — `8000` is a fixed convenience default for running on your own machine, not something Render sets or reads. Don't use it as the Render start command.
 
+### Python version
+
+The repo-root `.python-version` file pins the Render build to Python 3.11.9 — without it, Render defaults to a much newer Python (3.14), for which `pydantic-core==2.18.2` (pinned transitively by `pydantic==2.7.1` in `backend/requirements.txt`) has no pre-built wheel and cannot be compiled from source on Render's read-only build filesystem, failing the build outright.
+
 ### Required data files
 
 `backend/data/is1893_zones/is1893_zones.shp` (+ its shapefile sidecar files) and `backend/data/global_vs30/global_vs30.tif` are **not bundled in this repo**. Without them, the app still runs — `get_is1893_zone()` and `get_vs30()` degrade to their documented bounding-box / regional-default fallbacks (see `backend/services/inference.py`) — but with lower-confidence results than the real datasets provide.
