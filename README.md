@@ -677,6 +677,21 @@ Two things make a deployed crash debuggable from Render's log viewer alone, with
 
 ---
 
+## Distributing the App (EAS Build)
+
+`eas.json` defines three build profiles (`development`, `preview`, `production`). The one thing that trips people up: **a build's environment is not your local `.env`/`.env.local`.** Those files are gitignored, so EAS Build's cloud environment (an isolated clone of the repo) never sees them — anything a build needs has to be provided explicitly, either in `eas.json` or via EAS's own hosted environment variables.
+
+This matters concretely for `EXPO_PUBLIC_API_URL`: `services/api.ts`'s `resolveBaseUrl()` only auto-detects a LAN/emulator address when `__DEV__` is `true`, which it never is in an EAS build. Without this variable set for the build, a `preview` or `production` build falls all the way through to the `http://localhost:8000/api` fallback — meaningless on a real device, since nothing is listening there.
+
+- **`EXPO_PUBLIC_API_URL` is set directly in `eas.json`**, in both the `preview` and `production` profiles' `env` blocks, as `https://your-render-url.onrender.com/api` — replace that placeholder with your actual Render URL before building. This is committed to git deliberately: it's not a secret (it's the same public backend URL the app itself calls at runtime, visible to anyone who inspects the app's network traffic), the build genuinely needs it, and `.env`/`.env.local` aren't visible to the build anyway — so putting it anywhere other than `eas.json` (or EAS's hosted env vars) simply wouldn't work. The `development` profile deliberately has no `env` block, so a dev-client build keeps using the LAN/emulator auto-detect logic instead of a fixed URL.
+- **`EXPO_PUBLIC_OPENCAGE_KEY` is *not* in `eas.json`** — unlike the API URL, this is a real secret (see "Getting an OpenCage API Key" above), and belongs only in `.env.local`, which is never committed. If a `preview`/`production` build needs it (for accurate search in that build), provide it via EAS's own hosted environment variables instead of committing it:
+  ```bash
+  eas env:create --scope project --environment preview --name EXPO_PUBLIC_OPENCAGE_KEY --value <your-key>
+  ```
+  (repeat with `--environment production` for the production profile). This keeps the real key out of the repo entirely while still making it available to the build.
+
+---
+
 ## What to Build Next
 
 The zone shapefile query, the Vs30 raster tier, AsyncStorage persistence, `GuidelineItem.tsx`, the

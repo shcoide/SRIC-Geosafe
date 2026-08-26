@@ -21,7 +21,11 @@
     },
     "android": {
       "package": "com.geosafe.app",
-      "permissions": ["ACCESS_FINE_LOCATION"]
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
     },
     "plugins": [
       "expo-router",
@@ -32,6 +36,12 @@
         }
       ],
       "@maplibre/maplibre-react-native"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "f0437ea8-c226-4247-88ae-b502a5533c4b"
+      }
+    }
   }
 }

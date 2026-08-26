@@ -1,0 +1,27 @@
+{
+  "cli": {
+    "version": ">= 22.5.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://sric-geosafe.onrender.com/api"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://sric-geosafe.onrender.com/api"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
