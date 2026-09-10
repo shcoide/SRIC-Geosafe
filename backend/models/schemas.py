@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 class AnalyzeRequest(BaseModel):
     lat: float
@@ -7,11 +7,15 @@ class AnalyzeRequest(BaseModel):
     location_name: str
     floors: int = 3
     building_type: str = "residential"
+    # Widens/narrows get_materials()'s band-tolerance-plus-cost comparison —
+    # see services/inference.py's BAND_TOLERANCE_BY_BUDGET.
+    budget_preference: Literal["any", "low", "moderate"] = "any"
 
 class HazardSummary(BaseModel):
     type: str
     level: str
     description: str
+    source: str
 
 class EarthquakeRecord(BaseModel):
     magnitude: float
@@ -26,6 +30,12 @@ class MaterialRecommendation(BaseModel):
     reason: str
     isCode: str
     suitable: bool
+    note: str
+    collapseProbability: float
+    moderateDamageProbability: float
+    rankingBasis: str
+    relativeCost: int
+    costLabel: str
 
 class ArchitecturalGuideline(BaseModel):
     category: str
@@ -44,6 +54,11 @@ class AnalyzeResponse(BaseModel):
     amplificationFactor: float
     amplificationFactorSource: str
     surfacePga: float
+    surfaceSa: float
+    resonanceFactor: float
+    resonanceZone: str
+    buildingPeriodS: float
+    amplificationFrequencyHz: Optional[float] = None
     designBaseShearCoefficient: float
     designBaseShearCoefficientSource: str
     vs30: float

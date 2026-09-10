@@ -4,6 +4,8 @@ import { router } from 'expo-router';
 import { useLocationStore } from '../../store/useLocationStore';
 import { GuidelineItem } from '../../components/GuidelineItem';
 import { EmptyState } from '../../components/EmptyState';
+import { Colors } from '../../constants/colors';
+import { Space } from '../../constants/spacing';
 
 export default function GuidelinesScreen() {
   const result = useLocationStore((s) => s.currentResult);
@@ -20,7 +22,7 @@ export default function GuidelinesScreen() {
   }
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} contentContainerStyle={styles.container}>
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
       {result.guidelines.map((g, i) => (
         <GuidelineItem key={i} guideline={g} />
       ))}
@@ -29,5 +31,6 @@ export default function GuidelinesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 16, paddingBottom: 40 },
+  scroll: { flex: 1, backgroundColor: Colors.background },
+  container: { padding: Space.md, paddingBottom: Space.xl + Space.sm },
 });

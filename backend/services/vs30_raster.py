@@ -10,6 +10,34 @@ through to the next tier (regional geological default).
 Place the real file at VS30_RASTER_PATH before trusting this as a source —
 see scripts/validate_vs30.py, which checks the raster against calibrated
 borehole Vs30 values at city scale first.
+
+VALIDATION STATUS (as of this comment): the read path above (load_raster()
+opening the file at startup; read_vs30()'s windowed single-pixel lookup) was
+verified against a synthetic in-memory GeoTIFF and confirmed correct — it
+reads the pixel that actually contains the query point, and returns None
+(not a wrong neighbor) for out-of-bounds points and nodata pixels. What has
+NOT been done: comparing the real USGS raster against calibrated Vs30 at
+city scale, because the real file (631 MB) is not present in this repo or
+this environment, and the one download URL tried for it returned a
+CloudFront "AccessDenied" rather than the file. No accuracy figure (MAE)
+exists yet, so none of the three tiering policies below has been applied —
+the raster stays in the "modeled" tier, unchanged, exactly as before this
+comment was added. This is a known gap, not a resolved one; see README.md's
+Known Limitations.
+
+Once the real file is available, run `python scripts/validate_vs30.py`
+against the calibrated Guwahati points in data/site_calibration.py and act
+on its printed MAE:
+  MAE < 30 m/s   -> raster usable as-is; no code change needed here.
+  MAE 30-60 m/s  -> coarse but directionally correct for these flat alluvial
+                    basins; read_vs30()'s caller should report this tier as
+                    "modelled_coarse" instead of "modeled".
+  MAE > 60 m/s   -> not reliable at city scale for alluvial basins (the
+                    ~900m topographic-slope proxy this product uses breaks
+                    down where slope itself carries little signal); the
+                    "modeled" tier should be dropped for any point inside a
+                    CITY_REGIONS bbox and kept only outside all city
+                    coverage, reported as "modelled_unreliable_in_basin".
 """
 
 import logging

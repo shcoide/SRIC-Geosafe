@@ -10,9 +10,12 @@ answers come from real calibration versus a regional guess — every result
 looks equally confident. /api/coverage and /api/coverage/check expose that
 distinction so the UI can show it.
 
-Containment now goes through data.site_calibration.region_contains() (a
-real shapely geometry test against each region's declared bbox/polygon),
-not a haversine-radius test — regions are no longer modelled as circles.
+Containment now goes through data.site_calibration.find_containing_region()
+(a real shapely geometry test against each region's declared bbox/polygon,
+with an explicit most-specific-region-wins precedence for the rare case
+where two regions' declared geometries overlap — see
+check_region_overlaps()), not a haversine-radius test — regions are no
+longer modelled as circles.
 """
 
 import re
@@ -23,10 +26,10 @@ from data.site_calibration import (
     CALIBRATED_VS30_POINTS,
     CALIBRATION_RADIUS_KM,
     CITY_REGIONS,
+    find_containing_region,
     haversine_km,
     region_bounds,
     region_boundary_vertices,
-    region_contains,
 )
 from services.inference import get_is1893_zone, get_vs30
 
@@ -37,18 +40,14 @@ def region_id(name: str) -> str:
 
 
 def find_region_for_point(lat: float, lon: float) -> Tuple[Optional[dict], Optional[float]]:
-    """Nearest CITY_REGION whose declared geometry actually contains (lat, lon) — same
-    containment test and tie-break (nearest centre wins) as get_vs30()'s internal city-region
-    matching, so /coverage and /coverage/check never disagree with each other or with the
-    actual resolution logic."""
-    best, best_dist = None, None
-    for region in CITY_REGIONS:
-        if not region_contains(region, lat, lon):
-            continue
-        dist = haversine_km(lat, lon, region["lat"], region["lon"])
-        if best_dist is None or dist < best_dist:
-            best, best_dist = region, dist
-    return best, best_dist
+    """CITY_REGION whose declared geometry actually contains (lat, lon) — same containment
+    test and most-specific-region-wins precedence as get_vs30()'s internal city-region
+    matching (both go through data.site_calibration.find_containing_region()), so /coverage
+    and /coverage/check never disagree with each other or with the actual resolution logic."""
+    region = find_containing_region(lat, lon)
+    if region is None:
+        return None, None
+    return region, haversine_km(lat, lon, region["lat"], region["lon"])
 
 
 def _calibrated_points_in_region(region: dict) -> list:

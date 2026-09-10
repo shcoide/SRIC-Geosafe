@@ -4,7 +4,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useLocationStore } from '../../store/useLocationStore';
 import { analyzeLocation } from '../../services/api';
-import { Colors } from '../../constants/colors';
+import { Colors, Palette } from '../../constants/colors';
+import { Type } from '../../constants/typography';
+import { Space, Radius } from '../../constants/spacing';
 import { SearchResult } from '../../types';
 
 export default function HistoryScreen() {
@@ -36,7 +38,7 @@ export default function HistoryScreen() {
       <FlatList
         data={recentSearches}
         keyExtractor={(_, i) => String(i)}
-        contentContainerStyle={{ padding: 16 }}
+        contentContainerStyle={{ padding: Space.md }}
         renderItem={({ item }) => (
           <TouchableOpacity style={styles.item} onPress={() => handleSelect(item)}>
             <Text style={styles.name}>{item.name}</Text>
@@ -49,10 +51,14 @@ export default function HistoryScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#fff' },
-  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
-  emptyText: { fontSize: 14, color: Colors.text.secondary, textAlign: 'center' },
-  item: { paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: Colors.surface.border },
-  name: { fontSize: 14, fontWeight: '500', color: Colors.text.primary },
-  sub: { fontSize: 12, color: Colors.text.secondary, marginTop: 2 },
+  safe: { flex: 1, backgroundColor: Colors.background },
+  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: Space.lg },
+  emptyText: { ...Type.bodySmall, color: Colors.textSecondary, textAlign: 'center' },
+  item: {
+    backgroundColor: Palette.white,
+    borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.md,
+    padding: Space.sm + 4, marginBottom: Space.sm,
+  },
+  name: { ...Type.heading, color: Colors.textPrimary },
+  sub: { ...Type.bodySmall, color: Colors.textSecondary, marginTop: 1 },
 });

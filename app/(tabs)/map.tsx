@@ -12,8 +12,10 @@ import { getCoverage, checkCoverage, analyzeLocation, describeApiError, SLOW_REQ
 import { reverseGeocode } from '../../services/location';
 import { useSlowRequest } from '../../hooks/useSlowRequest';
 import { CoverageBadge } from '../../components/CoverageBadge';
-import { Colors } from '../../constants/colors';
-import { SOURCE_COLORS } from '../../constants/riskConfig';
+import { Colors, Palette } from '../../constants/colors';
+import { Type } from '../../constants/typography';
+import { Space, Radius } from '../../constants/spacing';
+import { SOURCE_COLORS, RISK_COLORS } from '../../constants/riskConfig';
 import { CoverageRegion, CoverageCheckResult } from '../../types';
 
 const DEBOUNCE_MS = 300;
@@ -297,6 +299,10 @@ export default function MapScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Swatch colours below reuse INTERPOLATED_DOT/MEASURED_DOT —
+            semantic map overlay colours, deliberately left unchanged (see
+            constants/riskConfig.ts). Only legendText/attribution
+            typography was restyled for the redesign. */}
         <View style={styles.legend}>
           <View style={styles.legendRow}>
             <View style={[styles.legendSwatch, styles.legendSwatchDashed, { borderColor: hexToRgba(INTERPOLATED_DOT, 0.8), backgroundColor: hexToRgba(INTERPOLATED_DOT, 0.1) }]} />
@@ -368,7 +374,7 @@ export default function MapScreen() {
                   disabled={analysisLoading}
                 >
                   {analysisLoading ? (
-                    <ActivityIndicator size="small" color="#fff" />
+                    <ActivityIndicator size="small" color={Palette.white} />
                   ) : (
                     <Text style={styles.analyzeBtnText}>
                       {checkResult.inCoverage ? 'Run full analysis' : 'Run full analysis (lower confidence)'}
@@ -391,77 +397,77 @@ export default function MapScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  chipRow: { maxHeight: 44, borderBottomWidth: 0.5, borderBottomColor: Colors.surface.border },
-  chipRowContent: { paddingHorizontal: 12, paddingVertical: 8, gap: 8 },
+  container: { flex: 1, backgroundColor: Colors.background },
+  chipRow: { maxHeight: 44, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  chipRowContent: { paddingHorizontal: Space.sm + 4, paddingVertical: Space.sm, gap: Space.sm },
   chip: {
-    borderWidth: 0.5, borderColor: Colors.primaryBorder, backgroundColor: Colors.primaryLight,
-    borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6,
+    borderWidth: 1, borderColor: Colors.primaryBorder, backgroundColor: Colors.primaryLight,
+    borderRadius: Radius.md, paddingHorizontal: Space.sm + 4, paddingVertical: Space.xs + 2,
   },
-  chipText: { fontSize: 12, fontWeight: '500', color: Colors.primary },
-  errorBanner: { backgroundColor: '#FCEBEB', padding: 8, paddingHorizontal: 12 },
-  errorBannerText: { fontSize: 11, color: '#791F1F' },
+  chipText: { ...Type.bodySmall, fontWeight: '500', color: Colors.primary },
+  errorBanner: { backgroundColor: RISK_COLORS['Very High'].bg, padding: Space.sm, paddingHorizontal: Space.sm + 4 },
+  errorBannerText: { ...Type.label, color: RISK_COLORS['Very High'].text },
   mapWrapper: { flex: 1 },
   map: { flex: 1 },
   markerDot: {
     width: 22, height: 22, borderRadius: 11,
-    borderWidth: 3, borderColor: '#fff',
+    borderWidth: 3, borderColor: Palette.white,
     shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 3, shadowOffset: { width: 0, height: 1 },
     elevation: 4,
   },
   zoomControls: {
-    position: 'absolute', top: 12, left: 12,
-    backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: 8,
-    borderWidth: 0.5, borderColor: Colors.surface.border,
+    position: 'absolute', top: Space.sm + 4, left: Space.sm + 4,
+    backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: Radius.md,
+    borderWidth: 1, borderColor: Colors.border,
     overflow: 'hidden',
   },
   zoomBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  zoomBtnText: { fontSize: 18, fontWeight: '600', color: Colors.text.primary },
-  zoomBtnDivider: { height: 0.5, backgroundColor: Colors.surface.border },
+  zoomBtnText: { ...Type.heading, fontWeight: '600', color: Colors.textPrimary },
+  zoomBtnDivider: { height: 0.5, backgroundColor: Colors.border },
   legend: {
-    position: 'absolute', top: 12, right: 12,
-    backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: 8, padding: 8,
-    borderWidth: 0.5, borderColor: Colors.surface.border, gap: 4,
+    position: 'absolute', top: Space.sm + 4, right: Space.sm + 4,
+    backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: Radius.md, padding: Space.sm,
+    borderWidth: 1, borderColor: Colors.border, gap: Space.xs,
   },
-  legendRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  legendSwatch: { width: 14, height: 14, borderRadius: 4, borderWidth: 1.5 },
+  legendRow: { flexDirection: 'row', alignItems: 'center', gap: Space.xs + 2 },
+  legendSwatch: { width: 14, height: 14, borderRadius: Radius.sm, borderWidth: 1.5 },
   legendSwatchDashed: { borderStyle: 'dashed' },
-  legendText: { fontSize: 10, color: Colors.text.secondary },
-  attribution: { fontSize: 9, color: Colors.text.muted, marginTop: 4 },
+  legendText: { ...Type.label, color: Colors.textSecondary },
+  attribution: { ...Type.label, color: Colors.textMuted, marginTop: Space.xs },
   hint: {
-    position: 'absolute', bottom: 30, left: 20, right: 20,
-    backgroundColor: '#fff', borderRadius: 10, padding: 14,
-    borderWidth: 0.5, borderColor: Colors.surface.border,
+    position: 'absolute', bottom: 30, left: Space.lg - 4, right: Space.lg - 4,
+    backgroundColor: Palette.white, borderRadius: Radius.lg, padding: Space.md - 2,
+    borderWidth: 1, borderColor: Colors.border,
     alignItems: 'center',
   },
-  hintText: { fontSize: 13, color: Colors.text.secondary },
+  hintText: { ...Type.bodySmall, color: Colors.textSecondary },
   sheet: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16,
-    borderWidth: 0.5, borderColor: Colors.surface.border,
-    padding: 16, gap: 8,
+    backgroundColor: Palette.white, borderTopLeftRadius: Radius.lg, borderTopRightRadius: Radius.lg,
+    borderWidth: 1, borderColor: Colors.border,
+    padding: Space.md, gap: Space.sm,
     shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8, shadowOffset: { width: 0, height: -2 },
     elevation: 8,
   },
   sheetCoordsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  sheetCoords: { fontSize: 13, fontWeight: '500', color: Colors.text.primary },
-  sheetLoading: { paddingVertical: 4 },
-  sheetLoadingText: { fontSize: 12, color: Colors.text.secondary },
-  sheetError: { fontSize: 12, color: '#A32D2D' },
-  sheetRegion: { fontSize: 12, color: Colors.text.secondary },
+  sheetCoords: { ...Type.mono, fontWeight: '500', color: Colors.textPrimary },
+  sheetLoading: { paddingVertical: Space.xs },
+  sheetLoadingText: { ...Type.bodySmall, color: Colors.textSecondary },
+  sheetError: { ...Type.bodySmall, color: RISK_COLORS['Very High'].text },
+  sheetRegion: { ...Type.bodySmall, color: Colors.textSecondary },
   outsideNotice: {
-    backgroundColor: Colors.surface.secondary, borderRadius: 8, padding: 10, gap: 6,
+    backgroundColor: Colors.surface, borderRadius: Radius.sm, padding: Space.sm + 2, gap: Space.xs + 2,
   },
-  outsideNoticeText: { fontSize: 11, color: Colors.text.secondary, lineHeight: 16 },
-  nearestRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  nearestText: { fontSize: 11, color: Colors.text.secondary, flex: 1 },
-  panBtn: { borderWidth: 0.5, borderColor: Colors.primaryBorder, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5 },
-  panBtnText: { fontSize: 11, fontWeight: '500', color: Colors.primary },
+  outsideNoticeText: { ...Type.label, color: Colors.textSecondary },
+  nearestRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Space.sm },
+  nearestText: { ...Type.label, color: Colors.textSecondary, flex: 1 },
+  panBtn: { borderWidth: 1, borderColor: Colors.primaryBorder, borderRadius: Radius.md, paddingHorizontal: Space.sm + 2, paddingVertical: Space.xs + 1 },
+  panBtnText: { ...Type.label, fontWeight: '500', color: Colors.primary },
   analyzeBtn: {
-    backgroundColor: Colors.primary, borderRadius: 10, paddingVertical: 13,
-    alignItems: 'center', marginTop: 4,
+    backgroundColor: Colors.primary, borderRadius: Radius.md, paddingVertical: Space.md - 3,
+    alignItems: 'center', marginTop: Space.xs,
   },
   analyzeBtnDisabled: { opacity: 0.6 },
-  analyzeBtnText: { fontSize: 14, fontWeight: '500', color: '#fff' },
-  slowNotice: { fontSize: 11, color: Colors.text.secondary, textAlign: 'center', marginTop: 6 },
+  analyzeBtnText: { ...Type.body, fontWeight: '500', color: Palette.white },
+  slowNotice: { ...Type.label, color: Colors.textSecondary, textAlign: 'center', marginTop: Space.xs + 2 },
 });

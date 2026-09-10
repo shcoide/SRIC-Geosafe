@@ -1,6 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Colors } from '../constants/colors';
+import { Type } from '../constants/typography';
+import { Space } from '../constants/spacing';
 import { ArchitecturalGuideline } from '../types';
 
 interface Props {
@@ -21,15 +23,16 @@ export const GuidelineItem: React.FC<Props> = ({ guideline }) => {
 };
 
 const styles = StyleSheet.create({
-  item: { paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: Colors.surface.border },
-  category: { fontSize: 10, color: Colors.text.muted, marginBottom: 3 },
-  rec: { fontSize: 13, fontWeight: '500', color: Colors.text.primary, marginBottom: 3 },
-  detail: { fontSize: 12, color: Colors.text.secondary, lineHeight: 18 },
+  item: { paddingVertical: Space.md - 4, borderBottomWidth: 0.5, borderBottomColor: Colors.border },
+  category: { ...Type.label, color: Colors.textMuted, marginBottom: Space.xs - 1 },
+  rec: { ...Type.heading, color: Colors.textPrimary, marginBottom: Space.xs - 1 },
+  detail: { ...Type.body, color: Colors.textSecondary },
   codeBadge: {
-    alignSelf: 'flex-start', marginTop: 6,
-    backgroundColor: Colors.surface.secondary,
-    borderWidth: 0.5, borderColor: Colors.surface.border,
-    borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2,
+    alignSelf: 'flex-start', marginTop: Space.sm - 2,
+    backgroundColor: Colors.surface,
+    // Same 2px radius as CoverageBadge/source badges (see components/CoverageBadge.tsx).
+    borderRadius: 2,
+    paddingHorizontal: Space.sm, paddingVertical: 2,
   },
-  codeText: { fontSize: 9, color: Colors.text.muted },
+  codeText: { ...Type.mono, color: Colors.textMuted },
 });

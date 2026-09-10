@@ -1,7 +1,7 @@
 import axios from 'axios';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
-import { LocationResult, CoverageRegion, CoverageCheckResult } from '../types';
+import { LocationResult, CoverageRegion, CoverageCheckResult, BudgetPreference } from '../types';
 
 const DEFAULT_PORT = 8000;
 
@@ -109,6 +109,7 @@ export interface AnalyzeParams {
   locationName: string;
   floors?: number;
   buildingType?: string;
+  budgetPreference?: BudgetPreference;
 }
 
 // The most recent analyzeLocation() call's params, kept purely for crash
@@ -129,6 +130,7 @@ export const analyzeLocation = async (params: AnalyzeParams): Promise<LocationRe
     location_name: params.locationName,
     floors: params.floors || 3,
     building_type: params.buildingType || 'residential',
+    budget_preference: params.budgetPreference || 'any',
   });
   return response.data;
 };

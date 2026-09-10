@@ -8,6 +8,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+from data.site_calibration import check_region_overlaps
 from data.zone_loader import load_zones, get_zones
 from services.vs30_raster import load_raster, get_dataset as get_vs30_dataset
 from services.faults import load_faults, get_faults
@@ -15,6 +16,24 @@ from rate_limit import limiter
 from routers import analyze, coverage
 
 logger = logging.getLogger(__name__)
+# Every other logger.* call in this file is .warning()/.exception() (ERROR),
+# which Python's logging module happens to print even with zero config, via
+# its "last resort" fallback handler — but that fallback's own level is
+# WARNING, so a plain logger.info() would be silently dropped (verified:
+# uvicorn's own logging setup only configures its "uvicorn"/"uvicorn.error"/
+# "uvicorn.access" loggers, never the root logger, so nothing else raises the
+# effective level). The startup port log below needs INFO to actually reach
+# Render's log tail, so this module gets its own handler instead of relying
+# on that fallback. propagate=False keeps this from double-printing anything
+# already visible via the root logger's fallback path (data/zone_loader.py,
+# services/vs30_raster.py, etc. are unaffected — they still go through that
+# same fallback exactly as before).
+logger.setLevel(logging.INFO)
+logger.propagate = False
+_handler = logging.StreamHandler()
+_handler.setLevel(logging.INFO)
+_handler.setFormatter(logging.Formatter("%(message)s"))
+logger.addHandler(_handler)
 
 app = FastAPI(title="GeoSafe API", version="1.0.0")
 
@@ -174,6 +193,52 @@ def _load_active_faults():
             "Startup: failed to load the active faults dataset — "
             "nearest_fault() will always return None."
         )
+
+
+@app.on_event("startup")
+def _check_region_overlaps():
+    """
+    CITY_REGIONS are independently hand-declared provisional bboxes (see
+    data/site_calibration.py), so nothing prevents two of them from covering
+    the same ground — find_containing_region() already has a deterministic
+    most-specific-region-wins rule for that case, so this is not a fatal
+    condition, just a fact worth surfacing: log a WARNING per overlapping
+    pair (visible in Render's log tail) rather than raising, so a bug in
+    this check itself can never take the service down.
+    """
+    try:
+        overlaps = check_region_overlaps()
+        for name_a, name_b, area_km2 in overlaps:
+            logger.warning(
+                "Startup: CITY_REGIONS '%s' and '%s' overlap (~%.1f km^2) — "
+                "find_containing_region() resolves points in the overlap to "
+                "whichever region is smaller/more specific.",
+                name_a, name_b, area_km2,
+            )
+    except Exception:
+        logger.exception("Startup: failed to check CITY_REGIONS for overlaps.")
+
+
+# This file has no `if __name__ == "__main__":` block — there is no
+# `python main.py` entry point in any environment, local or deployed. The
+# app is only ever started via the uvicorn CLI, which decides the port
+# entirely from its own `--port` flag, outside this file:
+#   - Locally:  uvicorn main:app --reload --port 8000 --host 0.0.0.0
+#   - Render:   uvicorn main:app --host 0.0.0.0 --port $PORT
+# (the exact Render start command lives in Render's dashboard, not in this
+# repo — see the README's "Deploying the Backend (Render)" section). So
+# there is no in-code `uvicorn.run(..., port=...)` call to check, and no
+# in-code port default that could drift out of sync with `$PORT` — reading
+# os.environ.get("PORT") below just mirrors the same value Render already
+# substituted into that `--port $PORT` flag, purely so it's visible in the
+# log without cross-checking the dashboard.
+@app.on_event("startup")
+def _log_bound_port():
+    logger.info(
+        "Startup: bound to port %s (from $PORT; falls back to 8000 locally "
+        "when $PORT isn't set — see the comment above).",
+        os.environ.get("PORT", "8000"),
+    )
 
 
 @app.get("/health")

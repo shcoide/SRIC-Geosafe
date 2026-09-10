@@ -11,12 +11,12 @@ from data.site_calibration import (
     CALIBRATED_SPT_POINTS,
     CALIBRATED_VS30_POINTS,
     CALIBRATION_RADIUS_KM,
-    CITY_REGIONS,
+    find_containing_region,
     haversine_km,
-    region_contains,
     region_effective_radius_km,
 )
 from data.zone_loader import get_zones, ZONE_FIELD
+from data.fragility_curves import TYPOLOGIES, compute_damage_probability
 from services.vs30_raster import read_vs30 as read_vs30_raster
 
 ZONE_PGA = {"II": 0.10, "III": 0.16, "IV": 0.24, "V": 0.36}
@@ -96,20 +96,20 @@ def _find_calibrated_point(lat: float, lon: float) -> Optional[dict]:
 
 def _match_city_region(lat: float, lon: float) -> Optional[Tuple[dict, float]]:
     """
-    Nearest city region whose declared geometry (bbox or polygon — see
+    City region whose declared geometry (bbox or polygon — see
     data.site_calibration) actually contains the point, with a 0..1 distance
     fraction for interpolation. Containment is a real shapely geometry test,
     not a haversine-radius test — regions are no longer modelled as circles.
+    When more than one region's geometry contains the point (see
+    data.site_calibration.check_region_overlaps()), find_containing_region()
+    picks the most specific (smallest-area) one, not whichever has the
+    nearest centre — the same rule services.coverage.find_region_for_point()
+    uses, so the two never disagree.
     """
-    best_region, best_dist = None, None
-    for region in CITY_REGIONS:
-        if not region_contains(region, lat, lon):
-            continue
-        dist = haversine_km(lat, lon, region["lat"], region["lon"])
-        if best_dist is None or dist < best_dist:
-            best_region, best_dist = region, dist
+    best_region = find_containing_region(lat, lon)
     if best_region is None:
         return None
+    best_dist = haversine_km(lat, lon, best_region["lat"], best_region["lon"])
     effective_radius = region_effective_radius_km(best_region)
     frac = min(best_dist / effective_radius, 1.0) if effective_radius else 0.0
     return best_region, frac
@@ -323,6 +323,91 @@ def estimate_fundamental_period_sec(floors: int, storey_height_m: float = 3.0) -
     height_m = max(floors, 1) * storey_height_m
     return round(0.075 * height_m ** 0.75, 4)
 
+def get_building_period(
+    floors: int,
+    building_type: str,
+    storey_height_m: float = 3.0,
+    infill_dimension_m: float = 15.0,
+) -> Tuple[float, str]:
+    """
+    IS 1893 (Part 1):2016 Cl 7.6.2 empirical fundamental period, used for the
+    building-resonance check (get_resonance_amplification) — separate from
+    estimate_fundamental_period_sec() above, which the design base shear
+    calculation always treats as a bare frame regardless of building_type.
+
+    Two formulae, selected by building_type:
+      - Bare RC moment frame (no masonry infill): Ta = 0.075 * h^0.75
+      - RC frame with masonry infill: Ta = 0.09h / sqrt(d)
+        AnalyzeRequest doesn't collect a building plan dimension, so d uses
+        IS 1893's own worked-example default of 15m rather than inventing
+        an estimate from floors alone.
+
+    "industrial" buildings are modelled as bare frames (large-span sheds
+    typically aren't infilled); "residential" and "commercial" — and
+    anything else the caller passes — are modelled as infilled frames,
+    the far more common case in Indian construction for both.
+    """
+    height_m = max(floors, 1) * storey_height_m
+    if building_type == "industrial":
+        ta = 0.075 * height_m ** 0.75
+        clause = "IS 1893 (Part 1):2016 Cl 7.6.2 (bare RC frame)"
+    else:
+        ta = (0.09 * height_m) / (infill_dimension_m ** 0.5)
+        clause = "IS 1893 (Part 1):2016 Cl 7.6.2 (RC frame with masonry infill, d=15m assumed)"
+    return round(ta, 4), clause
+
+def get_amplification_frequency_hz(lat: float, lon: float) -> Optional[float]:
+    """
+    Single representative resonant frequency for the city region containing
+    (lat, lon) — the Dehradun finding that motivated this feature: a 50-site
+    MASW/SHAKE2000 survey found the dominant amplification frequency runs
+    3-4 Hz in the north of the city (favouring low-rise resonance) against
+    1-1.5 Hz in the south-west (favouring mid-rise resonance), even though
+    both fall under the same IS 1893 Zone IV label.
+
+    Returns None wherever the matched region carries no measured
+    amplification_frequency_hz, or no region matches at all. Bhuj is a
+    deliberate case of the former: its HVSR data shows no strong shallow
+    impedance contrast, so there is no reliable single resonant peak to
+    report — get_resonance_amplification() treats that honestly as
+    "indeterminate" rather than inventing a frequency.
+    """
+    match = _match_city_region(lat, lon)
+    if match is None:
+        return None
+    region, _frac = match
+    return region.get("amplification_frequency_hz")
+
+@dataclass
+class ResonanceResult:
+    resonance_factor: float
+    resonance_zone: str  # "strong" | "moderate" | "none" | "indeterminate"
+
+def get_resonance_amplification(site_period: Optional[float], building_period: float) -> ResonanceResult:
+    """
+    Approximates the risk that a proposed building's fundamental period
+    couples with the site's dominant resonance period. This is a simplified
+    period-proximity approximation, not a real dynamic analysis — an actual
+    resonance assessment requires full soil-structure interaction modelling,
+    not a ratio of two single numbers. Treat resonance_factor as a coarse
+    risk flag, not a design value.
+
+    site_period is None wherever get_amplification_frequency_hz() found no
+    measured frequency for this location (Bhuj, and any control point with
+    no city region match at all) — returned as resonance_zone
+    "indeterminate" rather than assuming "none", since "no data" and "no
+    resonance risk" are not the same claim.
+    """
+    if site_period is None:
+        return ResonanceResult(resonance_factor=1.0, resonance_zone="indeterminate")
+
+    ratio = abs(building_period - site_period) / site_period
+    if ratio <= 0.2:
+        return ResonanceResult(resonance_factor=2.0, resonance_zone="strong")
+    if ratio <= 0.4:
+        return ResonanceResult(resonance_factor=1.5, resonance_zone="moderate")
+    return ResonanceResult(resonance_factor=1.0, resonance_zone="none")
+
 def get_design_base_shear_coefficient(
     zone: str,
     site_class: str,
@@ -345,68 +430,177 @@ def get_design_base_shear_coefficient(
     ah = (z / 2) * (importance_factor / response_reduction_factor) * spectrum.sa_g
     return DesignBaseShearResult(ah=round(ah, 4), source=vs30_source)
 
-def get_materials(zone: str, site_class: str, floors: int, building_type: str) -> List[dict]:
+# Band-tolerance width (as a fraction, e.g. 0.10 = 10 percentage points of
+# collapse probability), keyed by AnalyzeRequest.budget_preference. Widths
+# were derived, not guessed: get_materials()'s band-tolerance-plus-cost
+# comparison only lets a typology join "suitable" by being within this band
+# of AND cheaper than the current best — so the width has to be at least as
+# large as the real probability gap between two typologies for cost to ever
+# get a chance to prefer the cheaper one. At Zone V (surface_sa ~0.9g), the
+# gap between light gauge steel and RC moment frame is ~7.6 points; at Zone
+# II (~0.25g), the gap between RC moment frame and confined masonry is
+# ~8.4 points. "low" (a budget-conscious user) gets the widest band, so a
+# cheaper option gets the most room to be accepted as "close enough";
+# "any" (no budget preference) gets the narrowest, so only a near-identical
+# alternative ever displaces the safest option on cost grounds alone.
+BAND_TOLERANCE_BY_BUDGET = {
+    "low": 0.15,
+    "moderate": 0.10,
+    "any": 0.08,
+}
+DEFAULT_BUDGET_PREFERENCE = "any"
+
+def _cost_label(relative_cost: int) -> str:
+    if relative_cost <= 2:
+        return "Low cost"
+    if relative_cost == 3:
+        return "Moderate cost"
+    return "Higher cost"
+
+def get_materials(surface_sa: float, budget_preference: str = DEFAULT_BUDGET_PREFERENCE) -> List[dict]:
     """
-    site_class is accepted but deliberately not branched on: no IS code
-    provision links site/soil class to structural material selection (site
-    class governs design forces via the response spectrum — see
-    get_design_spectrum() — not which material system is appropriate).
-    Branching this on site_class without a citable IS clause would produce
-    authoritative-looking output with no real basis. This is the intended
-    insertion point for the trained damage/inference model, which can learn
-    real site-dependent material performance from data instead.
+    Fragility-based structural material ranking, replacing the previous
+    zone-only hardcoded lists (which branched on `zone` alone and never
+    varied by site class — see git history / explanation/CHANGELOG.md for
+    that version). For each typology in data/fragility_curves.py, computes
+    P(DS>=DS2) (moderate damage) and P(DS>=DS4) (collapse) at the site's
+    surface_sa via the standard lognormal fragility function
+    (compute_damage_probability), then ranks ascending by P(DS>=DS4) —
+    lowest collapse probability first.
+
+    surface_sa is derived from both seismic zone and site class (see
+    routers/analyze.py: Z x Sa/g, the IS 1893 zone factor times the design
+    spectrum's spectral shape at the building's estimated period), so the
+    ranking genuinely depends on both without this function branching on
+    either directly.
+
+    Per data/fragility_curves.py's own docstring: these fragility
+    parameters, and its relative_cost indices, are indicative values — not
+    a substitute for site-specific fragility analysis, structural design,
+    or a real quantity survey.
+
+    suitable is a BAND-TOLERANCE, COST-SENSITIVE ranking — not a fixed
+    top-half cutoff (an earlier version's rule) and not an absolute
+    P(DS>=DS4) threshold (the version before that, which returned zero
+    suitable typologies at every Zone V site). The lowest-collapse-
+    probability typology is always suitable. Each subsequent typology (in
+    ascending collapse-probability order) joins "suitable" only if BOTH:
+    its collapse probability is within `band_tolerance` (see
+    BAND_TOLERANCE_BY_BUDGET) of the *last typology that was itself marked
+    suitable*, AND its relative_cost is no higher than that typology's. A
+    typology outside the band, or inside the band but pricier, is
+    suitable=False — but the comparison anchor for the *next* typology
+    doesn't move past it, so a single expensive typology in the middle of
+    the ranking can't block a cheaper, still-close-enough option further
+    down from qualifying.
+
+    This fixes a real problem the earlier fixed top-two rule had: at low
+    surface_sa (Zone II/III), the top two typologies by raw collapse
+    probability are always the same two regardless of zone (their fragility
+    curves never cross rank order across this app's surface_sa range), so a
+    much cheaper typology with a negligibly higher — sometimes ~1% —
+    collapse probability was marked "avoid" purely because it ranked 3rd,
+    not because it was actually unsafe. Band-tolerance ranking lets a
+    cheaper, comparably-safe option in regardless of its raw rank position.
     """
-    if zone in ("IV", "V"):
-        recommended = [
-            {"rank": 1, "name": "RC moment frame with shear walls", "reason": "Best ductility and lateral resistance for Zone IV/V. Proven in NE India earthquakes.", "isCode": "IS 456 + IS 13920", "suitable": True},
-            {"rank": 2, "name": "Confined masonry", "reason": "Cost-effective for 1–2 storey. RC columns and tie beams confine masonry panels effectively.", "isCode": "IS 4326", "suitable": True},
-            {"rank": 3, "name": "Light gauge steel frame", "reason": "Lightweight — reduces seismic inertial forces. Ideal for soft soil (Class D/E) sites.", "isCode": "IS 801", "suitable": True},
-        ]
-        avoid = [
-            {"rank": 4, "name": "Unreinforced brick masonry", "reason": "No ductility. Collapses catastrophically in Zone IV/V without confinement.", "isCode": "IS 1905", "suitable": False},
-            {"rank": 5, "name": "Flat slab without walls", "reason": "Punching shear failure at column connections during lateral loading.", "isCode": "IS 456", "suitable": False},
-        ]
-    elif zone == "III":
-        recommended = [
-            {"rank": 1, "name": "RC frame with infill walls", "reason": "Adequate for Zone III with proper gap detailing around infill panels.", "isCode": "IS 456 + IS 13920", "suitable": True},
-            {"rank": 2, "name": "Reinforced masonry", "reason": "Suitable for low-rise (≤3 floors) residential in Zone III with steel reinforcement.", "isCode": "IS 1905", "suitable": True},
-        ]
-        avoid = [
-            {"rank": 3, "name": "Unreinforced masonry above 2 storeys", "reason": "Insufficient seismic resistance for multi-storey in Zone III.", "isCode": "IS 1905", "suitable": False},
-        ]
-    else:
-        recommended = [
-            {"rank": 1, "name": "RC frame or reinforced masonry", "reason": "Standard construction adequate for Zone II with basic seismic detailing.", "isCode": "IS 456", "suitable": True},
-        ]
-        avoid = []
-    return recommended + avoid
+    band_tolerance = BAND_TOLERANCE_BY_BUDGET.get(budget_preference, BAND_TOLERANCE_BY_BUDGET[DEFAULT_BUDGET_PREFERENCE])
+
+    ranked = sorted(
+        (
+            (
+                compute_damage_probability(surface_sa, typology["ds4_median_sa"], typology["ds4_beta"]),
+                compute_damage_probability(surface_sa, typology["ds2_median_sa"], typology["ds2_beta"]),
+                typology,
+            )
+            for typology in TYPOLOGIES.values()
+        ),
+        key=lambda row: row[0],
+    )
+
+    materials = []
+    anchor_prob = None
+    anchor_cost = None
+    for i, (p_ds4, p_ds2, typology) in enumerate(ranked):
+        cost = typology["relative_cost"]
+        if i == 0:
+            suitable = True
+            promoted_on_cost = False
+        else:
+            gap = p_ds4 - anchor_prob  # ascending sort => always >= 0
+            suitable = gap <= band_tolerance and cost <= anchor_cost
+            promoted_on_cost = suitable
+
+        if suitable:
+            anchor_prob, anchor_cost = p_ds4, cost
+
+        pct = round(p_ds4 * 100)
+        if i == 0:
+            note = f"Lowest collapse risk among assessed typologies. Absolute probability: {pct}%."
+        elif promoted_on_cost:
+            note = f"Comparable collapse risk to the safest option, at lower cost. Absolute probability: {pct}%."
+        else:
+            note = f"Higher collapse risk than the recommended options at this site. Absolute probability: {pct}%."
+
+        materials.append({
+            "rank": i + 1,
+            "name": typology["name"],
+            "reason": (
+                f"{pct}% probability of collapse-level damage (DS4) at this "
+                f"site's estimated Sa = {surface_sa:.2f}g. {typology['description']}."
+            ),
+            "isCode": typology["is_code"],
+            "suitable": suitable,
+            "note": note,
+            "collapseProbability": round(p_ds4, 2),
+            "moderateDamageProbability": round(p_ds2, 2),
+            "rankingBasis": "fragility_sa_convolution",
+            "relativeCost": cost,
+            "costLabel": _cost_label(cost),
+        })
+    return materials
 
 def get_guidelines(zone: str, site_class: str) -> List[dict]:
+    # IS CODE CITATIONS — VERIFICATION STATUS
+    # Confirmed against BIS documents: IS 1893 Cl. 7.6.2 (period formula)
+    # Unverified (plausible but not checked): all others
+    # Before publication: open IS 1893:2016, IS 13920:2016,
+    # IS 4326:2013 and verify each clause number and edition year.
+    # IS codes are revised periodically; a clause number in one
+    # edition may refer to different content in another.
     base = [
-        {"category": "Foundation", "recommendation": "Raft / mat foundation", "detail": "Required on Class C/D/E soil. Prevents differential settlement during ground shaking.", "isCodeRef": "IS 1893 Cl. 6.3"},
-        {"category": "Column reinforcement", "recommendation": f"Min. {'1.5%' if zone in ('IV','V') else '1.0%'} steel ratio", "detail": "Confining hoops at 100 mm c/c in plastic hinge zones (500 mm from joint).", "isCodeRef": "IS 13920 Cl. 7.3"},
-        {"category": "Beam-column joint", "recommendation": "Strong column – weak beam design", "detail": "Sum of column moment capacities must exceed sum of beam moment capacities at each joint.", "isCodeRef": "IS 13920 Cl. 7.2.1"},
-        {"category": "Roof", "recommendation": "Lightweight RCC slab", "detail": "Avoid heavy roof mass. Each additional tonne of roof mass increases seismic force by PGA × 1000 kg.", "isCodeRef": "IS 1893 Cl. 7.6"},
-        {"category": "Infill walls", "recommendation": "Leave gap between infill and RC frame", "detail": "Min. 20mm gap prevents short-column effect which causes brittle shear failure.", "isCodeRef": "IS 13920 Cl. 9.1"},
+        {"category": "Foundation", "recommendation": "Raft / mat foundation", "detail": "Required on Class C/D/E soil. Prevents differential settlement during ground shaking.", "isCodeRef": "IS 1893 Cl. 6.3"},  # VERIFY: IS 1893 Cl. 6.3 — needs confirmation against BIS document
+        {"category": "Column reinforcement", "recommendation": f"Min. {'1.5%' if zone in ('IV','V') else '1.0%'} steel ratio", "detail": "Confining hoops at 100 mm c/c in plastic hinge zones (500 mm from joint).", "isCodeRef": "IS 13920 Cl. 7.3"},  # VERIFY: IS 13920 Cl. 7.3 — needs confirmation against BIS document
+        {"category": "Beam-column joint", "recommendation": "Strong column – weak beam design", "detail": "Sum of column moment capacities must exceed sum of beam moment capacities at each joint.", "isCodeRef": "IS 13920 Cl. 7.2.1"},  # VERIFY: IS 13920 Cl. 7.2.1 — needs confirmation against BIS document
+        {"category": "Roof", "recommendation": "Lightweight RCC slab", "detail": "Avoid heavy roof mass. Each additional tonne of roof mass increases seismic force by PGA × 1000 kg.", "isCodeRef": "IS 1893 Cl. 7.6"},  # VERIFY: IS 1893 Cl. 7.6 — needs confirmation against BIS document
+        {"category": "Infill walls", "recommendation": "Leave gap between infill and RC frame", "detail": "Min. 20mm gap prevents short-column effect which causes brittle shear failure.", "isCodeRef": "IS 13920 Cl. 9.1"},  # VERIFY: IS 13920 Cl. 9.1 — needs confirmation against BIS document
     ]
     if zone in ("IV", "V") and site_class in ("D", "E"):
         base.append({
             "category": "Liquefaction mitigation",
             "recommendation": "Deep foundation or ground improvement",
             "detail": "Pile foundation to competent layer below liquefiable zone, or dynamic compaction / stone columns.",
-            "isCodeRef": "IS 1893 Part 1 Annex F"
+            "isCodeRef": "IS 1893 Part 1 Annex F"  # VERIFY: IS 1893 Part 1 Annex F — needs confirmation against BIS document
         })
     return base
 
-def get_hazards(zone: str, lat: float, lon: float) -> List[dict]:
+def get_hazards(zone: str, zone_source: str, lat: float, lon: float) -> List[dict]:
+    """
+    flood/landslide/cyclone levels come only from lat/lon bounding-box rules
+    below — no river, elevation, slope, geology, or coastline data is
+    actually consulted, so their description/source must say so honestly
+    rather than name inputs that were never read. "regional_bbox" is that
+    same honest source for all three. earthquake's level is a direct
+    reclassification of the real seismic zone (see get_is1893_zone), so it
+    carries zone_source ("shapefile" or "approximate") instead.
+    """
     zone_eq = {"II": "Low", "III": "Moderate", "IV": "High", "V": "Very High"}
     flood_risk = "High" if (lat >= 24 and lat <= 30 and lon >= 84 and lon <= 92) else "Moderate" if lat < 20 else "Low"
     landslide_risk = "Moderate" if (lat >= 28 or (lat >= 24 and lon >= 90)) else "Low"
     cyclone_risk = "High" if (lat <= 14 and lon >= 80) or (lat >= 20 and lat <= 24 and lon >= 85 and lon <= 92) else "Low"
 
     return [
-        {"type": "earthquake", "level": zone_eq[zone], "description": f"IS 1893 Zone {zone} seismic activity"},
-        {"type": "flood", "level": flood_risk, "description": "Based on river proximity and elevation"},
-        {"type": "landslide", "level": landslide_risk, "description": "Based on slope and geology"},
-        {"type": "cyclone", "level": cyclone_risk, "description": "Based on coastal proximity"},
+        {"type": "earthquake", "level": zone_eq[zone], "description": f"IS 1893 Zone {zone} seismic activity", "source": zone_source},
+        {"type": "flood", "level": flood_risk, "description": "Based on regional location classification", "source": "regional_bbox"},
+        {"type": "landslide", "level": landslide_risk, "description": "Based on regional location classification", "source": "regional_bbox"},
+        {"type": "cyclone", "level": cyclone_risk, "description": "Based on regional location classification", "source": "regional_bbox"},
     ]

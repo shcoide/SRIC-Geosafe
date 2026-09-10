@@ -3,7 +3,10 @@ import { ScrollView, View, Text, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { useLocationStore } from '../../store/useLocationStore';
 import { EmptyState } from '../../components/EmptyState';
-import { Colors } from '../../constants/colors';
+import { Colors, Palette } from '../../constants/colors';
+import { RISK_COLORS } from '../../constants/riskConfig';
+import { Type } from '../../constants/typography';
+import { Space, Radius } from '../../constants/spacing';
 
 export default function EarthquakeScreen() {
   const result = useLocationStore((s) => s.currentResult);
@@ -20,9 +23,18 @@ export default function EarthquakeScreen() {
   }
 
   const classesDisagree = result.siteClassSpt !== null && result.siteClassSpt !== result.siteClassVs30;
+  const disagreeColors = RISK_COLORS.Moderate;
+
+  // "strong"/"moderate" reuse the same risk-level colours the rest of the
+  // app uses for High/Moderate; "none"/"indeterminate" fall back to plain
+  // muted text — this is an approximation (period proximity only, not a
+  // dynamic analysis), so it deliberately doesn't borrow the "Low" green,
+  // which would read as a confident all-clear.
+  const resonanceLevel = result.resonanceZone === 'strong' ? 'High' : result.resonanceZone === 'moderate' ? 'Moderate' : null;
+  const resonanceRowColors = resonanceLevel ? RISK_COLORS[resonanceLevel] : null;
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: '#fff' }} contentContainerStyle={styles.container}>
+    <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
       <View style={styles.card}>
         <Text style={styles.cardHead}>Site parameters</Text>
         {[
@@ -43,12 +55,25 @@ export default function EarthquakeScreen() {
             <Text style={styles.rowValue}>{value}</Text>
           </View>
         ))}
+        <View
+          style={[
+            styles.row,
+            resonanceRowColors ? { backgroundColor: resonanceRowColors.bg, borderBottomColor: resonanceRowColors.border } : null,
+          ]}
+        >
+          <Text style={[styles.rowLabel, resonanceRowColors ? { color: resonanceRowColors.text } : null]}>
+            Building resonance
+          </Text>
+          <Text style={[styles.rowValue, { color: resonanceRowColors ? resonanceRowColors.text : Colors.textMuted }]}>
+            {result.buildingPeriodS.toFixed(2)}s · {result.resonanceZone}
+          </Text>
+        </View>
       </View>
 
       {classesDisagree && (
-        <View style={styles.warningBanner}>
-          <Text style={styles.warningTitle}>Vs30 and SPT-N site class disagree</Text>
-          <Text style={styles.warningBody}>
+        <View style={[styles.warningBanner, { backgroundColor: disagreeColors.bg, borderColor: disagreeColors.border }]}>
+          <Text style={[styles.warningTitle, { color: disagreeColors.text }]}>Vs30 and SPT-N site class disagree</Text>
+          <Text style={[styles.warningBody, { color: disagreeColors.text }]}>
             Class {result.siteClassVs30} (Vs30) vs. Class {result.siteClassSpt} (SPT-N) at this location.
             This discrepancy is documented in Indian soils — a shallow weathered crust can register a
             stiffer SPT-N refusal even where the deeper Vs30-averaged profile is soft — and is not a data error.
@@ -57,43 +82,53 @@ export default function EarthquakeScreen() {
       )}
 
       <Text style={styles.sectionLabel}>Recent earthquakes (300 km radius)</Text>
-      {result.earthquakes.map((eq, i) => (
-        <View key={i} style={styles.eqRow}>
-          <View>
-            <Text style={styles.eqMag}>M {eq.magnitude.toFixed(1)}</Text>
-            <Text style={styles.eqInfo}>{eq.place} · {eq.year} · depth {eq.depth} km</Text>
+      {result.earthquakes.map((eq, i) => {
+        const severity = eq.magnitude >= 6 ? 'High' : eq.magnitude >= 5 ? 'Moderate' : 'Low';
+        const severityLabel = eq.magnitude >= 6 ? 'Strong' : eq.magnitude >= 5 ? 'Moderate' : 'Light';
+        const severityColors = RISK_COLORS[severity];
+        return (
+          <View key={i} style={styles.eqRow}>
+            <View>
+              <Text style={styles.eqMag}>M {eq.magnitude.toFixed(1)}</Text>
+              <Text style={styles.eqInfo}>{eq.place} · {eq.year} · depth {eq.depth} km</Text>
+            </View>
+            <View style={[styles.pill, { backgroundColor: severityColors.bg }]}>
+              <Text style={[styles.pillText, { color: severityColors.text }]}>{severityLabel}</Text>
+            </View>
           </View>
-          <View style={[styles.pill, eq.magnitude >= 6 ? styles.pillHigh : eq.magnitude >= 5 ? styles.pillMod : styles.pillLow]}>
-            <Text style={[styles.pillText, eq.magnitude >= 6 ? styles.pillTextHigh : eq.magnitude >= 5 ? styles.pillTextMod : styles.pillTextLow]}>
-              {eq.magnitude >= 6 ? 'Strong' : eq.magnitude >= 5 ? 'Moderate' : 'Light'}
-            </Text>
-          </View>
-        </View>
-      ))}
+        );
+      })}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 16, paddingBottom: 40 },
-  card: { borderWidth: 0.5, borderColor: Colors.surface.border, borderRadius: 10, padding: 14, marginBottom: 16 },
-  warningBanner: { backgroundColor: '#FAEEDA', borderWidth: 0.5, borderColor: '#FAC775', borderRadius: 10, padding: 12, marginBottom: 16 },
-  warningTitle: { fontSize: 12, fontWeight: '500', color: '#633806', marginBottom: 4 },
-  warningBody: { fontSize: 11, color: '#633806', lineHeight: 16 },
-  cardHead: { fontSize: 10, fontWeight: '500', color: Colors.text.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 0.5, borderBottomColor: Colors.surface.border },
-  rowLabel: { fontSize: 12, color: Colors.text.secondary },
-  rowValue: { fontSize: 12, fontWeight: '500', color: Colors.text.primary },
-  sectionLabel: { fontSize: 10, fontWeight: '500', color: Colors.text.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 },
-  eqRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: Colors.surface.border },
-  eqMag: { fontSize: 15, fontWeight: '500', color: Colors.text.primary },
-  eqInfo: { fontSize: 10, color: Colors.text.secondary, marginTop: 2 },
-  pill: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 0.5 },
-  pillHigh: { backgroundColor: '#FCEBEB', borderColor: '#F7C1C1' },
-  pillMod: { backgroundColor: '#FAEEDA', borderColor: '#FAC775' },
-  pillLow: { backgroundColor: '#E6F1FB', borderColor: '#B5D4F4' },
-  pillText: { fontSize: 10, fontWeight: '500' },
-  pillTextHigh: { color: '#791F1F' },
-  pillTextMod: { color: '#633806' },
-  pillTextLow: { color: '#0C447C' },
+  scroll: { flex: 1, backgroundColor: Colors.background },
+  container: { padding: Space.md, paddingBottom: Space.xl + Space.sm },
+  card: {
+    backgroundColor: Palette.white,
+    borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.sm,
+    padding: Space.md, marginBottom: Space.md,
+  },
+  cardHead: { ...Type.label, color: Colors.textMuted, marginBottom: Space.sm + 2 },
+  row: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingVertical: Space.sm - 2, borderBottomWidth: 0.5, borderBottomColor: Colors.border,
+  },
+  rowLabel: { ...Type.bodySmall, color: Colors.textSecondary },
+  rowValue: { ...Type.mono, color: Colors.textPrimary },
+  warningBanner: { borderWidth: 1, borderRadius: Radius.sm, padding: Space.sm + 4, marginBottom: Space.md },
+  warningTitle: { ...Type.bodySmall, fontWeight: '500', marginBottom: Space.xs },
+  warningBody: { ...Type.bodySmall },
+  sectionLabel: { ...Type.label, color: Colors.textMuted, marginBottom: Space.sm + 2 },
+  eqRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingVertical: Space.sm + 2, borderBottomWidth: 0.5, borderBottomColor: Colors.border,
+  },
+  eqMag: { ...Type.heading, color: Colors.textPrimary },
+  eqInfo: { ...Type.label, color: Colors.textSecondary, marginTop: Space.xs / 2 },
+  // Same 2px radius as CoverageBadge (see components/CoverageBadge.tsx) —
+  // every small technical pill/tag in the app shares this treatment.
+  pill: { borderRadius: 2, paddingHorizontal: Space.sm, paddingVertical: Space.xs },
+  pillText: { ...Type.badge },
 });

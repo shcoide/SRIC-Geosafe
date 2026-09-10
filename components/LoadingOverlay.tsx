@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { Colors } from '../constants/colors';
+import { Type } from '../constants/typography';
+import { Space } from '../constants/spacing';
 import { useSlowRequest } from '../hooks/useSlowRequest';
 import { SLOW_REQUEST_THRESHOLD_MS, isBackendWarmed } from '../services/api';
 
@@ -37,6 +39,6 @@ export const LoadingOverlay: React.FC<Props> = ({
 };
 
 const styles = StyleSheet.create({
-  container: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: 14 },
-  text: { fontSize: 14, color: Colors.text.secondary },
+  container: { alignItems: 'center', justifyContent: 'center', paddingVertical: Space.xl + Space.lg + 4, gap: Space.md - 2 },
+  text: { ...Type.body, color: Colors.textSecondary },
 });

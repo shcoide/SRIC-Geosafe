@@ -2,6 +2,8 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../constants/colors';
+import { Type } from '../constants/typography';
+import { Space, Radius } from '../constants/spacing';
 
 interface Props {
   icon?: keyof typeof MaterialCommunityIcons.glyphMap;
@@ -20,7 +22,7 @@ export const EmptyState: React.FC<Props> = ({
 }) => {
   return (
     <View style={styles.container}>
-      <MaterialCommunityIcons name={icon} size={40} color={Colors.text.muted} />
+      <MaterialCommunityIcons name={icon} size={40} color={Colors.textMuted} />
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.message}>{message}</Text>
       {actionLabel && onAction && (
@@ -37,20 +39,20 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 32,
-    paddingVertical: 60,
-    gap: 6,
+    paddingHorizontal: Space.xl,
+    paddingVertical: Space.xl + Space.lg + 4,
+    gap: Space.sm - 2,
   },
-  title: { fontSize: 15, fontWeight: '500', color: Colors.text.primary, marginTop: 10 },
-  message: { fontSize: 13, color: Colors.text.secondary, textAlign: 'center', lineHeight: 20 },
+  title: { ...Type.heading, color: Colors.textPrimary, marginTop: Space.sm + 2 },
+  message: { ...Type.bodySmall, color: Colors.textSecondary, textAlign: 'center' },
   actionBtn: {
-    marginTop: 14,
-    borderWidth: 0.5,
+    marginTop: Space.sm + 6,
+    borderWidth: 1,
     borderColor: Colors.primaryBorder,
-    borderRadius: 10,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
+    borderRadius: Radius.md,
+    paddingHorizontal: Space.lg - 6,
+    paddingVertical: Space.sm + 4,
     backgroundColor: Colors.primaryLight,
   },
-  actionBtnText: { fontSize: 13, fontWeight: '500', color: Colors.primary },
+  actionBtnText: { ...Type.bodySmall, fontWeight: '500', color: Colors.primary },
 });

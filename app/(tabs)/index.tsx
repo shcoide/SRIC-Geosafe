@@ -12,13 +12,22 @@ import { useLocationStore } from '../../store/useLocationStore';
 import { analyzeLocation, getCoverage, checkCoverage, describeApiError } from '../../services/api';
 import { searchLocations } from '../../services/geocoding';
 import { getCurrentCoordinates, reverseGeocode } from '../../services/location';
-import { SearchResult, CoverageRegion } from '../../types';
-import { Colors } from '../../constants/colors';
+import { SearchResult, CoverageRegion, BudgetPreference } from '../../types';
+import { Colors, Palette } from '../../constants/colors';
+import { Type } from '../../constants/typography';
+import { Space, Radius } from '../../constants/spacing';
 import { RISK_COLORS, ZONE_RISK } from '../../constants/riskConfig';
+
+const BUDGET_OPTIONS: { value: BudgetPreference; label: string }[] = [
+  { value: 'any', label: 'Any budget' },
+  { value: 'low', label: 'Low cost' },
+  { value: 'moderate', label: 'Moderate budget' },
+];
 
 export default function HomeScreen() {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<SearchResult[]>([]);
+  const [budgetPreference, setBudgetPreference] = useState<BudgetPreference>('any');
   const { loading, setLoading, setCurrentResult, addRecentSearch, recentSearches } =
     useLocationStore();
 
@@ -69,6 +78,7 @@ export default function HomeScreen() {
         lat: item.lat,
         lon: item.lon,
         locationName: item.name,
+        budgetPreference,
       });
       setCurrentResult(result);
       addRecentSearch(item);
@@ -79,7 +89,7 @@ export default function HomeScreen() {
       setLoading(false);
       setSearchNote(null);
     }
-  }, []);
+  }, [budgetPreference]);
 
   const handleGps = useCallback(async () => {
     setLoading(true);
@@ -109,13 +119,28 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.safe}>
       <ScrollView style={styles.container} contentContainerStyle={styles.containerContent}>
         <Text style={styles.appTitle}>GeoSafe</Text>
-        <Text style={styles.appSub}>Seismic risk intelligence for any location</Text>
+        <Text style={styles.appSub}>Site-specific seismic assessment</Text>
 
         <SearchBar
           value={query}
           onChangeText={handleSearch}
           onGpsPress={handleGps}
         />
+
+        <View style={styles.budgetRow}>
+          {BUDGET_OPTIONS.map((opt) => {
+            const active = budgetPreference === opt.value;
+            return (
+              <TouchableOpacity
+                key={opt.value}
+                style={[styles.budgetChip, active && styles.budgetChipActive]}
+                onPress={() => setBudgetPreference(opt.value)}
+              >
+                <Text style={[styles.budgetChipText, active && styles.budgetChipTextActive]}>{opt.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
 
         {searchNote && (
           <View style={styles.searchNote}>
@@ -233,58 +258,70 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#fff' },
+  safe: { flex: 1, backgroundColor: Colors.background },
   container: { flex: 1 },
-  containerContent: { padding: 16, paddingBottom: 40 },
-  appTitle: { fontSize: 26, fontWeight: '500', color: Colors.text.primary, marginBottom: 2 },
-  appSub: { fontSize: 13, color: Colors.text.secondary, marginBottom: 20 },
+  containerContent: { padding: Space.md, paddingBottom: Space.xl + Space.sm },
+  appTitle: { ...Type.title, color: Colors.textPrimary, marginBottom: Space.xs / 2 },
+  appSub: { ...Type.bodySmall, color: Colors.textMuted, marginBottom: Space.lg - 4 },
   sectionLabel: {
-    fontSize: 10, fontWeight: '500', color: Colors.text.muted,
-    textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginTop: 8,
+    ...Type.label, color: Colors.textMuted,
+    marginBottom: Space.sm, marginTop: Space.sm,
   },
+  budgetRow: { flexDirection: 'row', gap: Space.sm, marginTop: Space.sm + 2 },
+  budgetChip: {
+    paddingHorizontal: Space.sm + 2, paddingVertical: Space.xs + 2,
+    borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border,
+    backgroundColor: Palette.white,
+  },
+  budgetChipActive: { backgroundColor: Colors.primaryLight, borderColor: Colors.primary },
+  budgetChipText: { ...Type.label, color: Colors.textSecondary },
+  budgetChipTextActive: { color: Colors.primary, fontWeight: '500' },
   searchNote: {
-    backgroundColor: Colors.surface.secondary, borderRadius: 8, padding: 10, marginTop: 10,
+    backgroundColor: Colors.surface, borderRadius: Radius.sm, padding: Space.sm + 2, marginTop: Space.sm + 2,
   },
-  searchNoteText: { fontSize: 11, color: Colors.text.secondary, lineHeight: 16 },
+  searchNoteText: { ...Type.label, color: Colors.textSecondary },
   suggestions: {
-    borderWidth: 0.5, borderColor: Colors.surface.border,
-    borderRadius: 10, overflow: 'hidden', marginTop: 12,
+    borderWidth: 1, borderColor: Colors.border,
+    borderRadius: Radius.md, overflow: 'hidden', marginTop: Space.sm + 4,
   },
   suggestion: {
-    padding: 12, borderBottomWidth: 0.5, borderBottomColor: Colors.surface.border,
+    padding: Space.sm + 4, borderBottomWidth: 0.5, borderBottomColor: Colors.border,
   },
-  suggestionText: { fontSize: 13, color: Colors.text.primary },
-  errorBanner: { backgroundColor: '#FCEBEB', borderRadius: 8, padding: 10, marginTop: 12 },
-  errorBannerText: { fontSize: 11, color: '#791F1F' },
-  coverageSection: { marginTop: 20 },
-  coverageSummary: { fontSize: 12, color: Colors.text.secondary, lineHeight: 18, marginBottom: 12 },
+  suggestionText: { ...Type.bodySmall, color: Colors.textPrimary },
+  errorBanner: { backgroundColor: RISK_COLORS['Very High'].bg, borderRadius: Radius.sm, padding: Space.sm + 2, marginTop: Space.sm + 4 },
+  errorBannerText: { ...Type.label, color: RISK_COLORS['Very High'].text },
+  coverageSection: { marginTop: Space.lg - 4 },
+  coverageSummary: { ...Type.bodySmall, color: Colors.textSecondary, marginBottom: Space.sm + 4 },
   regionCard: {
-    borderWidth: 0.5, borderColor: Colors.surface.border, borderRadius: 10,
-    padding: 12, marginBottom: 10,
+    backgroundColor: Palette.white,
+    borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.md,
+    padding: Space.sm + 4, marginBottom: Space.sm + 2,
   },
-  regionCardHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
+  regionCardHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: Space.sm },
   regionCardHeaderText: { flex: 1 },
-  regionName: { fontSize: 14, fontWeight: '500', color: Colors.text.primary },
-  regionState: { fontSize: 11, color: Colors.text.muted, marginTop: 1 },
-  zoneBadge: { borderRadius: 6, borderWidth: 0.5, paddingHorizontal: 8, paddingVertical: 3 },
-  zoneBadgeText: { fontSize: 11, fontWeight: '500' },
-  regionMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
-  regionCount: { fontSize: 11, color: Colors.text.secondary },
-  pointsList: { marginTop: 8, borderTopWidth: 0.5, borderTopColor: Colors.surface.border, paddingTop: 8, gap: 2 },
-  noPointsText: { fontSize: 11, color: Colors.text.muted, fontStyle: 'italic' },
+  regionName: { ...Type.heading, color: Colors.textPrimary },
+  regionState: { ...Type.bodySmall, color: Colors.textSecondary, marginTop: 1 },
+  zoneBadge: { borderRadius: Radius.sm, borderWidth: 1, paddingHorizontal: Space.sm, paddingVertical: 3 },
+  zoneBadgeText: { ...Type.label, fontWeight: '500' },
+  regionMetaRow: { flexDirection: 'row', alignItems: 'center', gap: Space.sm, marginTop: Space.sm },
+  regionCount: { ...Type.label, color: Colors.textSecondary },
+  pointsList: { marginTop: Space.sm, borderTopWidth: 0.5, borderTopColor: Colors.border, paddingTop: Space.sm, gap: 2 },
+  noPointsText: { ...Type.label, color: Colors.textMuted, fontStyle: 'italic' },
   pointRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingVertical: 6,
+    paddingVertical: Space.xs + 2,
   },
-  pointName: { fontSize: 12, color: Colors.primary, fontWeight: '500' },
-  pointSpt: { fontSize: 10, color: Colors.text.muted },
-  viewMapBtn: { marginTop: 8, alignSelf: 'flex-start' },
-  viewMapBtnText: { fontSize: 11, fontWeight: '500', color: Colors.primary },
+  pointName: { ...Type.bodySmall, color: Colors.primary, fontWeight: '500' },
+  pointSpt: { ...Type.label, color: Colors.textMuted },
+  viewMapBtn: { marginTop: Space.sm, alignSelf: 'flex-start' },
+  viewMapBtnText: { ...Type.label, fontWeight: '500', color: Colors.primary },
   recentItem: {
-    paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: Colors.surface.border,
+    backgroundColor: Palette.white,
+    borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.md,
+    padding: Space.sm + 4, marginBottom: Space.sm,
   },
-  recentName: { fontSize: 13, fontWeight: '500', color: Colors.text.primary },
-  recentSub: { fontSize: 11, color: Colors.text.secondary, marginTop: 1 },
-  emptyState: { alignItems: 'center', paddingHorizontal: 24, paddingTop: 60 },
-  emptyText: { fontSize: 14, color: Colors.text.secondary, textAlign: 'center', lineHeight: 22 },
+  recentName: { ...Type.heading, color: Colors.textPrimary },
+  recentSub: { ...Type.bodySmall, color: Colors.textSecondary, marginTop: 1 },
+  emptyState: { alignItems: 'center', paddingHorizontal: Space.lg, paddingTop: Space.xl + Space.lg },
+  emptyText: { ...Type.body, color: Colors.textSecondary, textAlign: 'center' },
 });

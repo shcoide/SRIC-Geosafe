@@ -5,7 +5,9 @@ import { RiskBanner } from '../../components/RiskBanner';
 import { HazardCard } from '../../components/HazardCard';
 import { EmptyState } from '../../components/EmptyState';
 import { useLocationStore } from '../../store/useLocationStore';
-import { Colors } from '../../constants/colors';
+import { Colors, Palette } from '../../constants/colors';
+import { Type } from '../../constants/typography';
+import { Space, Radius } from '../../constants/spacing';
 
 export default function ResultsOverview() {
   const result = useLocationStore((s) => s.currentResult);
@@ -32,6 +34,7 @@ export default function ResultsOverview() {
         zone={result.seismicZone}
         surfacePga={result.surfacePga}
         vs30={result.vs30}
+        siteClassVs30={result.siteClassVs30}
       />
 
       <Text style={styles.sectionLabel}>Hazard breakdown</Text>
@@ -71,36 +74,44 @@ export default function ResultsOverview() {
         </View>
       </View>
 
-      <TouchableOpacity style={styles.actionBtn} onPress={() => router.push('/results/materials')}>
-        <Text style={styles.actionBtnText}>View material recommendations</Text>
+      <TouchableOpacity style={styles.primaryBtn} onPress={() => router.push('/results/materials')}>
+        <Text style={styles.primaryBtnText}>View material recommendations</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={styles.actionBtn} onPress={() => router.push('/results/guidelines')}>
-        <Text style={styles.actionBtnText}>View architectural guidelines</Text>
+      <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.push('/results/guidelines')}>
+        <Text style={styles.secondaryBtnText}>View architectural guidelines</Text>
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: '#fff' },
-  container: { padding: 16, paddingBottom: 40 },
-  locationName: { fontSize: 20, fontWeight: '500', color: Colors.text.primary, marginBottom: 2 },
-  coords: { fontSize: 12, color: Colors.text.muted, marginBottom: 14 },
+  scroll: { flex: 1, backgroundColor: Colors.background },
+  container: { padding: Space.md, paddingBottom: Space.xl + Space.sm },
+  locationName: { ...Type.title, color: Colors.textPrimary, marginBottom: Space.xs / 2 },
+  coords: { ...Type.mono, color: Colors.textMuted, marginBottom: Space.md },
   sectionLabel: {
-    fontSize: 10, fontWeight: '500', color: Colors.text.muted,
-    textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 16, marginBottom: 8,
+    ...Type.label, color: Colors.textMuted,
+    marginTop: Space.md, marginBottom: Space.sm,
   },
-  hazardGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  hazardGrid: { flexDirection: 'row', gap: Space.sm },
+  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Space.sm },
   statBox: {
-    width: '47%', backgroundColor: Colors.surface.secondary,
-    borderRadius: 8, padding: 12,
+    width: '47%', backgroundColor: Palette.white,
+    borderWidth: 1, borderColor: Colors.border,
+    borderRadius: Radius.sm, padding: Space.sm + 4,
   },
-  statNum: { fontSize: 18, fontWeight: '500', color: Colors.text.primary },
-  statLabel: { fontSize: 10, color: Colors.text.secondary, marginTop: 2 },
-  actionBtn: {
-    marginTop: 10, borderWidth: 0.5, borderColor: Colors.primaryBorder,
-    borderRadius: 10, padding: 14, alignItems: 'center', backgroundColor: Colors.primaryLight,
+  statNum: { ...Type.title, color: Colors.textPrimary },
+  statLabel: { ...Type.label, color: Colors.textSecondary, marginTop: Space.xs / 2 },
+  primaryBtn: {
+    marginTop: Space.sm, borderRadius: Radius.md,
+    paddingVertical: Space.md - 2, alignItems: 'center',
+    backgroundColor: Colors.primary,
   },
-  actionBtnText: { fontSize: 14, fontWeight: '500', color: Colors.primary },
+  primaryBtnText: { ...Type.body, fontWeight: '500', color: Palette.white },
+  secondaryBtn: {
+    marginTop: Space.sm, borderRadius: Radius.md,
+    paddingVertical: Space.md - 2, alignItems: 'center',
+    backgroundColor: Palette.white, borderWidth: 1, borderColor: Colors.primaryBorder,
+  },
+  secondaryBtnText: { ...Type.body, fontWeight: '500', color: Colors.primary },
 });

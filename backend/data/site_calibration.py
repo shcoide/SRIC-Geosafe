@@ -70,12 +70,14 @@ class CityRegion(TypedDict, total=False):
     lon: float
     geometry: RegionGeometry
     geometrySource: GeometrySource
+    interpolation_radius_km: float  # original circle radius this region's bbox was derived from; see region_effective_radius_km
     vs30_min: float
     vs30_max: float
     site_class: Optional[str]
     notes: str
     resonance_hz: Tuple[float, float]
     amplification: Tuple[float, float]
+    amplification_frequency_hz: float  # single representative resonant frequency — see get_resonance_amplification()
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -106,6 +108,56 @@ def region_contains(region: CityRegion, lat: float, lon: float) -> bool:
     return region_polygon(region).contains(Point(lon, lat))
 
 
+def find_containing_region(lat: float, lon: float) -> Optional[CityRegion]:
+    """
+    The CITY_REGION whose declared geometry contains (lat, lon). CITY_REGIONS
+    are independently declared, provisional bboxes (see module docstring) —
+    nothing prevents two of them from covering the same ground (see
+    check_region_overlaps()), so when more than one region contains the
+    point, the most specific one wins: the region with the smallest
+    geometry area, e.g. Guwahati South's hill-outcrop bbox sitting inside
+    Guwahati's much larger valley bbox. This is an explicit precedence
+    rule, not incidental CITY_REGIONS declaration order or nearest-centre
+    distance — both services.inference's Vs30 resolution and
+    services.coverage.find_region_for_point() call this so the two can
+    never disagree about which region a point belongs to.
+    """
+    matches = [region for region in CITY_REGIONS if region_contains(region, lat, lon)]
+    if not matches:
+        return None
+    return min(matches, key=lambda region: region_polygon(region).area)
+
+
+def check_region_overlaps() -> List[Tuple[str, str, float]]:
+    """
+    Every pair of CITY_REGIONS whose declared geometries overlap, as
+    (name_a, name_b, overlap_area_km2). Meant to be called once at process
+    startup (see main.py) and logged as a warning, not raised — an overlap
+    is expected to be possible given these are independently hand-declared
+    provisional bboxes (see module docstring), and find_containing_region()
+    already has a deterministic rule for resolving it. This just makes an
+    existing overlap visible in the logs instead of leaving it to be
+    inferred from behaviour.
+
+    Area is converted from the polygons' native degree^2 (lon/lat) into an
+    approximate km^2 using each pair's mean latitude for the longitude
+    scale factor — coarse, but only used for a log line, not a decision.
+    """
+    overlaps: List[Tuple[str, str, float]] = []
+    polygons = [(region, region_polygon(region)) for region in CITY_REGIONS]
+    for i, (region_a, poly_a) in enumerate(polygons):
+        for region_b, poly_b in polygons[i + 1:]:
+            intersection = poly_a.intersection(poly_b)
+            if intersection.is_empty:
+                continue
+            km_per_deg_lat = 111.32
+            mean_lat = (region_a["lat"] + region_b["lat"]) / 2
+            km_per_deg_lon = km_per_deg_lat * math.cos(math.radians(mean_lat))
+            area_km2 = intersection.area * km_per_deg_lat * km_per_deg_lon
+            overlaps.append((region_a["name"], region_b["name"], area_km2))
+    return overlaps
+
+
 def region_boundary_vertices(region: CityRegion) -> List[LatLon]:
     """Ordered {lat, lon} vertices describing the region's outline, for map rendering."""
     geometry = region["geometry"]
@@ -129,14 +181,17 @@ def region_bounds(region: CityRegion) -> dict:
 
 def region_effective_radius_km(region: CityRegion) -> float:
     """
-    Max distance from the region's centre to any vertex of its declared
-    geometry. Used only to normalise interpolation distance into [0, 1] for
-    the Vs30 min/max blend in get_vs30() — a stand-in for the old radius_km,
-    now that regions aren't literal circles. This is NOT a containment
-    boundary; region_contains() is authoritative for that.
+    Radius used only to normalise interpolation distance into [0, 1] for the
+    Vs30 min/max blend in get_vs30(). Read directly from the region's
+    declared `interpolation_radius_km` (the original circle radius the
+    region's bbox/polygon was derived from) rather than computed from the
+    geometry's vertices — the geometry is generally not a circle (a square
+    bbox's corner is r√2 from centre, not r), so deriving the normalisation
+    radius from vertex distance would silently rescale every interpolated
+    Vs30 whenever a region's geometry shape changed. This is NOT a
+    containment boundary; region_contains() is authoritative for that.
     """
-    vertices = region_boundary_vertices(region)
-    return max(haversine_km(region["lat"], region["lon"], v["lat"], v["lon"]) for v in vertices)
+    return region["interpolation_radius_km"]
 
 
 def region_from_points(points: List[Tuple[float, float]], method: str = "concave", buffer_km: float = 1.0):
@@ -233,6 +288,7 @@ CITY_REGIONS: list[CityRegion] = [
         # Provisional bbox derived from the old circle (centre 26.1445,91.7362, radius 15km).
         "geometry": {"type": "bbox", "north": 26.27989, "south": 26.00911, "east": 91.88621, "west": 91.58619},
         "geometrySource": "provisional_bbox",
+        "interpolation_radius_km": 15.0,
         "vs30_min": 220.0, "vs30_max": 280.0,
         "site_class": "D",
         "notes": "Brahmaputra valley alluvium. Most of the city is Class D; "
@@ -249,6 +305,7 @@ CITY_REGIONS: list[CityRegion] = [
         # Provisional bbox derived from the old circle (centre 26.0500,91.7800, radius 6km).
         "geometry": {"type": "bbox", "north": 26.10416, "south": 25.99584, "east": 91.83995, "west": 91.72005},
         "geometrySource": "provisional_bbox",
+        "interpolation_radius_km": 6.0,
         "vs30_min": 280.0, "vs30_max": 340.0,
         "site_class": "C",
         "notes": "Basistha/Garbhanga hill outcrops south of the city — "
@@ -262,11 +319,17 @@ CITY_REGIONS: list[CityRegion] = [
         # Provisional bbox derived from the old circle (centre 30.3800,78.0700, radius 10km).
         "geometry": {"type": "bbox", "north": 30.47020, "south": 30.28979, "east": 78.17404, "west": 77.96596},
         "geometrySource": "provisional_bbox",
+        "interpolation_radius_km": 10.0,
         "vs30_min": 200.0, "vs30_max": 700.0,
         "site_class": None,  # derive from interpolated Vs30 - spans multiple classes
         "notes": "Siwalik foothills / Doon gravel fans. Stiffer and far more "
                  "variable than the valley floor, occasional rock outcrop. "
-                 "Boundary is a provisional bbox, not a survey extent.",
+                 "Boundary is a provisional bbox, not a survey extent. "
+                 "50-site MASW/SHAKE2000 amplification analysis reports a "
+                 "dominant amplification frequency of 3-4 Hz here — resonant "
+                 "with low-rise buildings, not the 1-1.5 Hz measured in "
+                 "Dehradun South.",
+        "amplification_frequency_hz": 3.5,
     },
     {
         "name": "Dehradun South",
@@ -275,11 +338,17 @@ CITY_REGIONS: list[CityRegion] = [
         # Provisional bbox derived from the old circle (centre 30.2600,77.9300, radius 10km).
         "geometry": {"type": "bbox", "north": 30.35021, "south": 30.16979, "east": 78.03391, "west": 77.82609},
         "geometrySource": "provisional_bbox",
+        "interpolation_radius_km": 10.0,
         "vs30_min": 180.0, "vs30_max": 400.0,
         "site_class": None,
         "notes": "Doon valley floor toward the Song/Suswa rivers - softer "
                  "alluvial fill than the northern foothills. Boundary is a "
-                 "provisional bbox, not a survey extent.",
+                 "provisional bbox, not a survey extent. 50-site MASW/"
+                 "SHAKE2000 amplification analysis reports a dominant "
+                 "amplification frequency of 1-1.5 Hz here — resonant with "
+                 "mid-rise buildings, the opposite risk profile from "
+                 "Dehradun North's 3-4 Hz.",
+        "amplification_frequency_hz": 1.25,
     },
     {
         "name": "Bhuj",
@@ -288,6 +357,7 @@ CITY_REGIONS: list[CityRegion] = [
         # Provisional bbox derived from the old circle (centre 23.2420,69.6669, radius 20km).
         "geometry": {"type": "bbox", "north": 23.42259, "south": 23.06141, "east": 69.86233, "west": 69.47147},
         "geometrySource": "provisional_bbox",
+        "interpolation_radius_km": 20.0,
         "vs30_min": 220.0, "vs30_max": 300.0,
         "site_class": None,
         "notes": "Kutch basin fill shows no strong shallow impedance contrast, "
