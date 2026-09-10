@@ -6,11 +6,9 @@
     "scheme": "geosafe",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
+    "platforms": ["ios", "android"],
     "runtimeVersion": {
       "policy": "sdkVersion"
-    },
-    "web": {
-      "bundler": "metro"
     },
     "ios": {
       "supportsTablet": false,
@@ -22,6 +20,9 @@
     "android": {
       "package": "com.geosafe.app",
       "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
         "ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
@@ -42,6 +43,9 @@
       "eas": {
         "projectId": "f0437ea8-c226-4247-88ae-b502a5533c4b"
       }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/f0437ea8-c226-4247-88ae-b502a5533c4b"
     }
   }
 }
