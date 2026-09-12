@@ -19,6 +19,7 @@
     },
     "android": {
       "package": "com.geosafe.app",
+      "jsEngine": "hermes",
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
@@ -35,8 +36,7 @@
         {
           "locationWhenInUsePermission": "GeoSafe needs your location for seismic risk analysis."
         }
-      ],
-      "@maplibre/maplibre-react-native"
+      ]
     ],
     "extra": {
       "router": {},
@@ -46,6 +46,9 @@
     },
     "updates": {
       "url": "https://u.expo.dev/f0437ea8-c226-4247-88ae-b502a5533c4b"
+    },
+    "experiments": {
+      "reactCompiler": false
     }
   }
 }

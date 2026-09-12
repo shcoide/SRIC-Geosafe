@@ -86,14 +86,14 @@ export default function ResultsOverview() {
 
 const styles = StyleSheet.create({
   scroll: { flex: 1, backgroundColor: Colors.background },
-  container: { padding: Space.md, paddingBottom: Space.xl + Space.sm },
+  container: { padding: Space.md, paddingBottom: 32 },
   locationName: { ...Type.title, color: Colors.textPrimary, marginBottom: Space.xs / 2 },
   coords: { ...Type.mono, color: Colors.textMuted, marginBottom: Space.md },
   sectionLabel: {
     ...Type.label, color: Colors.textMuted,
-    marginTop: Space.md, marginBottom: Space.sm,
+    marginTop: Space.lg, marginBottom: Space.sm,
   },
-  hazardGrid: { flexDirection: 'row', gap: Space.sm },
+  hazardGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Space.sm },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Space.sm },
   statBox: {
     width: '47%', backgroundColor: Palette.white,

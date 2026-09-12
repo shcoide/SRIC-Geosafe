@@ -1,11 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert,
 } from 'react-native';
-import {
-  MapView, Camera, ShapeSource, FillLayer, LineLayer, CircleLayer,
-  RasterSource, RasterLayer, PointAnnotation, type CameraRef,
-} from '@maplibre/maplibre-react-native';
+import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useLocationStore } from '../../store/useLocationStore';
 import { getCoverage, checkCoverage, analyzeLocation, describeApiError, SLOW_REQUEST_THRESHOLD_MS, isBackendWarmed } from '../../services/api';
@@ -20,22 +17,7 @@ import { CoverageRegion, CoverageCheckResult } from '../../types';
 
 const DEBOUNCE_MS = 300;
 
-// MapTiler (free tier, account required, no billing) if a key is set;
-// otherwise plain OpenStreetMap raster tiles, which need no signup at all —
-// the zero-setup path for offline/CI use. See README ("Coverage Map Screen").
-const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY;
-const TILE_URL_TEMPLATE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`
-  : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-
-// Empty base style — the actual basemap imagery comes from our own
-// RasterSource/RasterLayer below, not a hosted MapLibre demo style, so this
-// has no dependency on any third-party style server. Declared outside the
-// component so it's a stable reference (avoids re-parsing the style natively
-// on every render).
-const EMPTY_STYLE = { version: 8 as const, sources: {}, layers: [] };
-
-const INDIA_CENTER: [number, number] = [80, 22.5]; // MapLibre uses [lon, lat]
+const INDIA_CENTER: [number, number] = [22.5, 80]; // Leaflet uses [lat, lon]
 const INDIA_ZOOM = 4;
 
 const hexToRgba = (hex: string, alpha: number): string => {
@@ -47,45 +29,127 @@ const hexToRgba = (hex: string, alpha: number): string => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
+// Reused as-is from the MapLibre implementation these replace — both are the
+// app's existing source-confidence color tokens (constants/riskConfig.ts),
+// not literally "blue"/"teal": interpolated is an amber/gold tone, measured
+// is green. Kept for consistency with the same provenance-color language
+// used everywhere else in the app (CoverageBadge, the map legend below),
+// rather than introducing new one-off colors just for this map.
 const INTERPOLATED_DOT = SOURCE_COLORS.interpolated.dot;
 const MEASURED_DOT = SOURCE_COLORS.measured.dot;
 
-const closeRing = (points: [number, number][]): [number, number][] =>
-  points.length > 0 && points[0][0] === points[points.length - 1][0] && points[0][1] === points[points.length - 1][1]
-    ? points
-    : [...points, points[0]];
+// Builds the self-contained Leaflet page. Loads Leaflet itself from its
+// official CDN (unpkg) rather than bundling the library's JS/CSS into this
+// template literal — "self-contained" here means no separate .html asset
+// file in the project (the whole point of this migration is dropping a
+// large *native* dependency; pulling ~40KB gzipped of Leaflet from a CDN at
+// runtime, the same way the map tiles themselves are already fetched, costs
+// nothing in APK size). Region/point geometry is baked into the page at
+// generation time (via JSON.stringify below) rather than injected after
+// load, so there's no load-order race to coordinate for the initial data.
+const buildLeafletHtml = (regions: CoverageRegion[]): string => {
+  const provisional = regions.filter((r) => r.geometrySource !== 'survey_hull');
+  const survey = regions.filter((r) => r.geometrySource === 'survey_hull');
 
-const regionsToFeatureCollection = (regionList: CoverageRegion[]): GeoJSON.FeatureCollection => ({
-  type: 'FeatureCollection',
-  features: regionList.map((region) => ({
-    type: 'Feature',
-    properties: { id: region.id },
-    geometry: {
-      type: 'Polygon',
-      coordinates: [closeRing(region.boundary.map((p): [number, number] => [p.lon, p.lat]))],
-    },
-  })),
-});
+  // Leaflet coordinates are [lat, lon] — the opposite order from the
+  // GeoJSON [lon, lat] pairs the old MapLibre implementation used.
+  const provisionalPolygons = provisional.map((r) => r.boundary.map((p) => [p.lat, p.lon]));
+  const surveyPolygons = survey.map((r) => r.boundary.map((p) => [p.lat, p.lon]));
+  const points = regions.flatMap((r) => r.calibratedPoints.map((p) => [p.lat, p.lon, p.radiusKm]));
 
-const pointsToFeatureCollection = (regionList: CoverageRegion[]): GeoJSON.FeatureCollection => ({
-  type: 'FeatureCollection',
-  features: regionList.flatMap((region) =>
-    region.calibratedPoints.map((point) => ({
-      type: 'Feature' as const,
-      properties: { name: point.name },
-      geometry: { type: 'Point' as const, coordinates: [point.lon, point.lat] },
-    }))
-  ),
-});
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body, #map { height: 100%; margin: 0; padding: 0; }
+    .leaflet-control-attribution { font-size: 10px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    var map = L.map('map').setView([${INDIA_CENTER[0]}, ${INDIA_CENTER[1]}], ${INDIA_ZOOM});
+
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 19,
+    }).addTo(map);
+
+    var provisionalPolygons = ${JSON.stringify(provisionalPolygons)};
+    var surveyPolygons = ${JSON.stringify(surveyPolygons)};
+    var points = ${JSON.stringify(points)};
+
+    // Dashed = a declared rectangle, not yet derived from survey data (see
+    // geometrySource in backend/data/site_calibration.py).
+    provisionalPolygons.forEach(function (coords) {
+      L.polygon(coords, {
+        color: '${INTERPOLATED_DOT}', weight: 2, opacity: 0.6,
+        fillOpacity: 0.08, dashArray: '8, 8',
+      }).addTo(map);
+    });
+    // Solid = a real survey-derived boundary.
+    surveyPolygons.forEach(function (coords) {
+      L.polygon(coords, {
+        color: '${INTERPOLATED_DOT}', weight: 2, opacity: 0.6, fillOpacity: 0.08,
+      }).addTo(map);
+    });
+
+    // L.circle()'s radius is real metres on the ground, unlike MapLibre's
+    // circleRadius (screen pixels) — this is a genuine improvement, not a
+    // workaround: these circles now show each point's true ~2km calibration
+    // catchment instead of an arbitrary decorative dot size.
+    points.forEach(function (p) {
+      L.circle([p[0], p[1]], {
+        radius: p[2] * 1000,
+        color: '${MEASURED_DOT}', weight: 1.5, opacity: 1,
+        fillColor: '${MEASURED_DOT}', fillOpacity: 0.35,
+      }).addTo(map);
+    });
+
+    var marker = null;
+
+    function markerIcon(color) {
+      return L.divIcon({
+        className: '',
+        html: '<div style="width:22px;height:22px;border-radius:11px;background:' + color +
+          ';border:3px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.3);"></div>',
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+      });
+    }
+
+    function post(payload) {
+      window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+    }
+
+    map.on('click', function (e) {
+      var lat = e.latlng.lat, lon = e.latlng.lng;
+      if (marker) { map.removeLayer(marker); }
+      marker = L.marker([lat, lon], { draggable: true, icon: markerIcon('${Colors.primary}') }).addTo(map);
+      marker.on('dragend', function () {
+        var pos = marker.getLatLng();
+        post({ type: 'markerMoved', lat: pos.lat, lon: pos.lng });
+      });
+      post({ type: 'mapTapped', lat: lat, lon: lon });
+    });
+  </script>
+</body>
+</html>`;
+};
 
 export default function MapScreen() {
   const { setCurrentResult, addRecentSearch } = useLocationStore();
   const params = useLocalSearchParams<{ regionId?: string }>();
-  const cameraRef = useRef<CameraRef>(null);
+  const webViewRef = useRef<WebView>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [regions, setRegions] = useState<CoverageRegion[]>([]);
   const [regionsError, setRegionsError] = useState<string | null>(null);
+  const [mapReady, setMapReady] = useState(false);
 
   const [marker, setMarker] = useState<{ lat: number; lon: number } | null>(null);
   const [checkResult, setCheckResult] = useState<CoverageCheckResult | null>(null);
@@ -100,7 +164,13 @@ export default function MapScreen() {
   // to trigger its own re-render — analysisSlow flipping true is what
   // does that, and this is just read alongside it at that point.
   const analysisWasLikelyColdStart = useRef(false);
-  const [zoomLevel, setZoomLevel] = useState(INDIA_ZOOM);
+
+  // Regenerated only when the fetched region list changes (once, after the
+  // initial GET /api/coverage resolves) — the WebView reloads when its
+  // source.html changes, so mapReady is reset until the new page's onLoad
+  // fires again.
+  const leafletHtml = useMemo(() => buildLeafletHtml(regions), [regions]);
+  useEffect(() => setMapReady(false), [leafletHtml]);
 
   useEffect(() => {
     (async () => {
@@ -133,57 +203,49 @@ export default function MapScreen() {
     debounceRef.current = setTimeout(() => runCoverageCheck(lat, lon), DEBOUNCE_MS);
   }, [runCoverageCheck]);
 
-  const handleMapPress = useCallback((feature: GeoJSON.Feature) => {
-    if (feature.geometry.type !== 'Point') return;
-    const [lon, lat] = feature.geometry.coordinates;
-    setMarker({ lat, lon });
-    runCoverageCheck(lat, lon);
-  }, [runCoverageCheck]);
+  const handleWebViewMessage = useCallback((event: WebViewMessageEvent) => {
+    let data: { type: string; lat: number; lon: number };
+    try {
+      data = JSON.parse(event.nativeEvent.data);
+    } catch {
+      return;
+    }
+    if (data.type === 'mapTapped') {
+      setMarker({ lat: data.lat, lon: data.lon });
+      runCoverageCheck(data.lat, data.lon);
+    } else if (data.type === 'markerMoved') {
+      setMarker({ lat: data.lat, lon: data.lon });
+      debouncedCheck(data.lat, data.lon);
+    }
+  }, [runCoverageCheck, debouncedCheck]);
 
-  const handleMarkerDragEnd = useCallback((feature: GeoJSON.Feature) => {
-    if (feature.geometry.type !== 'Point') return;
-    const [lon, lat] = feature.geometry.coordinates;
-    setMarker({ lat, lon });
-    debouncedCheck(lat, lon);
-  }, [debouncedCheck]);
+  // `map` is a global in the WebView's page script (declared at the top
+  // level in buildLeafletHtml above), so injected script can call it
+  // directly — no round-trip wrapper function needed.
+  const flyTo = useCallback((lat: number, lon: number, zoom = 12) => {
+    webViewRef.current?.injectJavaScript(`map.flyTo([${lat}, ${lon}], ${zoom}); true;`);
+  }, []);
 
-  const panToRegion = (region: CoverageRegion) => {
-    cameraRef.current?.fitBounds(
-      [region.bounds.east, region.bounds.north],
-      [region.bounds.west, region.bounds.south],
-      40,
-      500
-    );
-  };
+  const panToRegion = useCallback((region: CoverageRegion) => {
+    flyTo(region.center.lat, region.center.lon);
+  }, [flyTo]);
 
   // Focuses the region passed via router params (e.g. "View on map" on the
-  // home screen's region cards). Re-runs whenever the param or the fetched
-  // region list changes, so it works whether this tab was already mounted
-  // (tab switches don't remount by default) or just mounted for the first time.
+  // home screen's region cards). Re-runs whenever the param, the fetched
+  // region list, or map readiness changes, so it works whether this tab was
+  // already mounted, just mounted, or the WebView was still loading Leaflet
+  // when the param first arrived.
   useEffect(() => {
-    if (params.regionId && regions.length > 0) {
+    if (mapReady && params.regionId && regions.length > 0) {
       const found = regions.find((r) => r.id === params.regionId);
       if (found) panToRegion(found);
     }
-  }, [params.regionId, regions]);
-
-  const handleZoomBy = (delta: number) => {
-    cameraRef.current?.zoomTo(zoomLevel + delta, 200);
-  };
+  }, [mapReady, params.regionId, regions, panToRegion]);
 
   const handlePanToNearest = () => {
     const nearest = checkResult?.nearestRegion;
     if (!nearest) return;
-    const found = regions.find((r) => r.id === nearest.id);
-    if (found) {
-      panToRegion(found);
-    } else {
-      cameraRef.current?.setCamera({
-        centerCoordinate: [nearest.center.lon, nearest.center.lat],
-        zoomLevel: 9,
-        animationDuration: 500,
-      });
-    }
+    flyTo(nearest.center.lat, nearest.center.lon);
   };
 
   const handleRunFullAnalysis = useCallback(async () => {
@@ -203,9 +265,22 @@ export default function MapScreen() {
     }
   }, [marker]);
 
-  const provisionalRegions = regions.filter((r) => r.geometrySource !== 'survey_hull');
-  const surveyRegions = regions.filter((r) => r.geometrySource === 'survey_hull');
   const markerDotColor = checkResult ? SOURCE_COLORS[checkResult.expectedVs30Source].dot : Colors.primary;
+
+  // Keeps the in-page marker's color in sync with the async coverage-check
+  // result (starts as Colors.primary at drop time, then updates once
+  // checkResult resolves) — mirrors what the old PointAnnotation's
+  // `backgroundColor` did reactively for free; here it's an explicit inject
+  // since the marker lives inside the WebView's own JS context.
+  useEffect(() => {
+    if (marker && mapReady) {
+      webViewRef.current?.injectJavaScript(
+        `if (typeof marker !== 'undefined' && marker) { marker.setIcon(markerIcon('${markerDotColor}')); } true;`
+      );
+    }
+  }, [markerDotColor, marker, mapReady]);
+
+  const showHint = !marker;
 
   return (
     <View style={styles.container}>
@@ -226,83 +301,18 @@ export default function MapScreen() {
       )}
 
       <View style={styles.mapWrapper}>
-        <MapView
+        <WebView
+          ref={webViewRef}
           style={styles.map}
-          mapStyle={EMPTY_STYLE}
-          onPress={handleMapPress}
-          onRegionDidChange={(feature) => setZoomLevel(feature.properties.zoomLevel)}
-        >
-          <Camera ref={cameraRef} defaultSettings={{ centerCoordinate: INDIA_CENTER, zoomLevel: INDIA_ZOOM }} />
-
-          <RasterSource id="basemap" tileUrlTemplates={[TILE_URL_TEMPLATE]} tileSize={256}>
-            <RasterLayer id="basemap-layer" />
-          </RasterSource>
-
-          {provisionalRegions.length > 0 && (
-            <ShapeSource id="regions-provisional" shape={regionsToFeatureCollection(provisionalRegions)}>
-              <FillLayer id="regions-provisional-fill" style={{ fillColor: hexToRgba(INTERPOLATED_DOT, 0.08) }} />
-              {/* Dashed = a declared rectangle, not yet derived from survey
-                  data (see geometrySource in data/site_calibration.py). */}
-              <LineLayer
-                id="regions-provisional-line"
-                style={{ lineColor: hexToRgba(INTERPOLATED_DOT, 0.6), lineWidth: 2, lineDasharray: [8, 8] }}
-              />
-            </ShapeSource>
-          )}
-          {surveyRegions.length > 0 && (
-            <ShapeSource id="regions-survey" shape={regionsToFeatureCollection(surveyRegions)}>
-              <FillLayer id="regions-survey-fill" style={{ fillColor: hexToRgba(INTERPOLATED_DOT, 0.08) }} />
-              {/* Solid = a real survey-derived boundary. */}
-              <LineLayer
-                id="regions-survey-line"
-                style={{ lineColor: hexToRgba(INTERPOLATED_DOT, 0.6), lineWidth: 2 }}
-              />
-            </ShapeSource>
-          )}
-
-          {regions.some((r) => r.calibratedPoints.length > 0) && (
-            <ShapeSource id="calibrated-points" shape={pointsToFeatureCollection(regions)}>
-              {/* MapLibre's circleRadius is in screen pixels, not metres — a
-                  true-to-scale circle needs custom per-zoom math, so this uses
-                  a fixed pixel radius rather than point.radiusKm. */}
-              <CircleLayer
-                id="calibrated-points-circle"
-                style={{
-                  circleRadius: 20,
-                  circleColor: hexToRgba(MEASURED_DOT, 0.35),
-                  circleStrokeColor: hexToRgba(MEASURED_DOT, 0.9),
-                  circleStrokeWidth: 2,
-                }}
-              />
-            </ShapeSource>
-          )}
-
-          {marker && (
-            <PointAnnotation
-              id="check-marker"
-              coordinate={[marker.lon, marker.lat]}
-              draggable
-              onDragEnd={handleMarkerDragEnd}
-            >
-              <View style={[styles.markerDot, { backgroundColor: markerDotColor }]} />
-            </PointAnnotation>
-          )}
-        </MapView>
-
-        <View style={styles.zoomControls}>
-          <TouchableOpacity style={styles.zoomBtn} onPress={() => handleZoomBy(1)}>
-            <Text style={styles.zoomBtnText}>+</Text>
-          </TouchableOpacity>
-          <View style={styles.zoomBtnDivider} />
-          <TouchableOpacity style={styles.zoomBtn} onPress={() => handleZoomBy(-1)}>
-            <Text style={styles.zoomBtnText}>−</Text>
-          </TouchableOpacity>
-        </View>
+          originWhitelist={['*']}
+          source={{ html: leafletHtml }}
+          onLoad={() => setMapReady(true)}
+          onMessage={handleWebViewMessage}
+        />
 
         {/* Swatch colours below reuse INTERPOLATED_DOT/MEASURED_DOT —
             semantic map overlay colours, deliberately left unchanged (see
-            constants/riskConfig.ts). Only legendText/attribution
-            typography was restyled for the redesign. */}
+            constants/riskConfig.ts). */}
         <View style={styles.legend}>
           <View style={styles.legendRow}>
             <View style={[styles.legendSwatch, styles.legendSwatchDashed, { borderColor: hexToRgba(INTERPOLATED_DOT, 0.8), backgroundColor: hexToRgba(INTERPOLATED_DOT, 0.1) }]} />
@@ -314,12 +324,12 @@ export default function MapScreen() {
           </View>
           <View style={styles.legendRow}>
             <View style={[styles.legendSwatch, { borderColor: hexToRgba(MEASURED_DOT, 0.9), backgroundColor: hexToRgba(MEASURED_DOT, 0.4) }]} />
-            <Text style={styles.legendText}>Calibrated point (measured)</Text>
+            <Text style={styles.legendText}>Calibrated survey point</Text>
           </View>
           <Text style={styles.attribution}>© OpenStreetMap contributors</Text>
         </View>
 
-        {!marker && (
+        {showHint && (
           <View style={styles.hint}>
             <Text style={styles.hintText}>Tap anywhere in India to check data coverage for that point</Text>
           </View>
@@ -409,21 +419,6 @@ const styles = StyleSheet.create({
   errorBannerText: { ...Type.label, color: RISK_COLORS['Very High'].text },
   mapWrapper: { flex: 1 },
   map: { flex: 1 },
-  markerDot: {
-    width: 22, height: 22, borderRadius: 11,
-    borderWidth: 3, borderColor: Palette.white,
-    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 3, shadowOffset: { width: 0, height: 1 },
-    elevation: 4,
-  },
-  zoomControls: {
-    position: 'absolute', top: Space.sm + 4, left: Space.sm + 4,
-    backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: Radius.md,
-    borderWidth: 1, borderColor: Colors.border,
-    overflow: 'hidden',
-  },
-  zoomBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  zoomBtnText: { ...Type.heading, fontWeight: '600', color: Colors.textPrimary },
-  zoomBtnDivider: { height: 0.5, backgroundColor: Colors.border },
   legend: {
     position: 'absolute', top: Space.sm + 4, right: Space.sm + 4,
     backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: Radius.md, padding: Space.sm,
@@ -443,6 +438,9 @@ const styles = StyleSheet.create({
   hintText: { ...Type.bodySmall, color: Colors.textSecondary },
   sheet: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
+    // Capped so the map above it stays fully visible and pannable — this
+    // sheet must never grow to cover most of the screen.
+    maxHeight: '40%',
     backgroundColor: Palette.white, borderTopLeftRadius: Radius.lg, borderTopRightRadius: Radius.lg,
     borderWidth: 1, borderColor: Colors.border,
     padding: Space.md, gap: Space.sm,

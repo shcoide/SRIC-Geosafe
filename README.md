@@ -194,6 +194,10 @@ eas update --branch preview
 
 No Google Play developer account is required to distribute the app as a standalone APK for direct install (`eas build --profile preview` produces an installable `.apk`); a Play Store listing is only needed for Play Store distribution, which this project does not currently use.
 
+Two additional build profiles exist for specific cases (`eas.json`):
+- `preview-release` — a release-signed APK (`buildType: apk`, `gradleCommand: :app:assembleRelease`), still directly installable like `preview`, but with debug symbols stripped and JS minified, so it's meaningfully smaller.
+- `aab-preview` — an Android App Bundle (`buildType: app-bundle`) with per-architecture splits, smaller still, but **not directly installable**: an `.aab` only works through the Play Store or a local `bundletool` extraction step (`bundletool build-apks` + `install-apks`) — there is no "download and tap to install" path for it. This profile exists for future Play Store submission testing only; for direct APK distribution (the app's current distribution model), use `preview-release` instead.
+
 ---
 
 ## API reference

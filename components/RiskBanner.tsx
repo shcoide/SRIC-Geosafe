@@ -1,9 +1,9 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { RISK_COLORS } from '../constants/riskConfig';
-import { Colors } from '../constants/colors';
+import { Colors, Palette } from '../constants/colors';
 import { Type } from '../constants/typography';
-import { Space, Radius } from '../constants/spacing';
+import { Space } from '../constants/spacing';
 
 interface Props {
   risk: 'Low' | 'Moderate' | 'High' | 'Very High';
@@ -13,46 +13,69 @@ interface Props {
   siteClassVs30?: string;
 }
 
-const hexToRgba = (hex: string, alpha: number): string => {
-  const clean = hex.replace('#', '');
-  const value = parseInt(clean, 16);
-  const r = (value >> 16) & 255;
-  const g = (value >> 8) & 255;
-  const b = value & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
-
 export const RiskBanner: React.FC<Props> = ({ risk, zone, surfacePga, vs30, siteClassVs30 }) => {
   const colors = RISK_COLORS[risk];
   return (
-    <View
-      style={[
-        styles.container,
-        { backgroundColor: hexToRgba(colors.bg, 0.6), borderLeftColor: colors.dot },
-      ]}
-    >
-      <Text style={[styles.zoneLine, { color: colors.text }]}>Zone {zone} · IS 1893</Text>
+    <View style={[styles.container, { borderLeftColor: colors.dot }]}>
+      <View style={styles.zoneRow}>
+        <View style={[styles.zonePill, { backgroundColor: colors.dot }]}>
+          <Text style={styles.zonePillText}>Zone {zone}</Text>
+        </View>
+        <Text style={styles.isCode}>IS 1893:2016</Text>
+      </View>
 
       <Text style={[styles.riskText, { color: colors.text }]}>{risk}</Text>
-      <Text style={[styles.descriptor, { color: colors.text }]}>Seismic risk</Text>
+      <Text style={styles.descriptor}>Seismic risk at this site</Text>
 
-      <Text style={styles.dataRow}>
-        PGA {surfacePga.toFixed(2)}g  ·  Vs30 {Math.round(vs30)} m/s{siteClassVs30 ? `  ·  Class ${siteClassVs30}` : ''}
-      </Text>
+      <View style={styles.divider} />
+
+      <View style={styles.dataRow}>
+        <View style={styles.dataItem}>
+          <Text style={styles.dataLabel}>PGA</Text>
+          <Text style={styles.dataValue}>{surfacePga.toFixed(2)}g</Text>
+        </View>
+        <View style={styles.vDivider} />
+        <View style={styles.dataItem}>
+          <Text style={styles.dataLabel}>Vs30</Text>
+          <Text style={styles.dataValue}>{Math.round(vs30)} m/s</Text>
+        </View>
+        {siteClassVs30 ? (
+          <>
+            <View style={styles.vDivider} />
+            <View style={styles.dataItem}>
+              <Text style={styles.dataLabel}>Site class</Text>
+              <Text style={styles.dataValue}>{siteClassVs30}</Text>
+            </View>
+          </>
+        ) : null}
+      </View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    borderRadius: Radius.sm,
-    borderLeftWidth: 3,
-    paddingVertical: Space.md,
-    paddingHorizontal: Space.md,
+    backgroundColor: Palette.white,
+    borderLeftWidth: 4,
+    borderTopWidth: 0.5,
+    borderRightWidth: 0.5,
+    borderBottomWidth: 0.5,
+    borderColor: Colors.border,
+    borderTopRightRadius: 6,
+    borderBottomRightRadius: 6,
+    padding: Space.md,
     marginBottom: Space.md,
   },
-  zoneLine: { ...Type.label, marginBottom: Space.sm },
-  riskText: { ...Type.riskDisplay },
-  descriptor: { ...Type.bodySmall, opacity: 0.75, marginBottom: Space.sm },
-  dataRow: { ...Type.mono, color: Colors.textMuted },
+  zoneRow: { flexDirection: 'row', alignItems: 'center', gap: Space.sm, marginBottom: 10 },
+  zonePill: { borderRadius: 3, paddingHorizontal: Space.sm, paddingVertical: 3 },
+  zonePillText: { fontSize: 11, fontWeight: '500', color: Palette.white },
+  isCode: { fontSize: 11, color: Colors.textMuted },
+  riskText: { fontSize: 40, fontWeight: '200', letterSpacing: -1 },
+  descriptor: { fontSize: 13, color: Colors.textSecondary, marginBottom: 14 },
+  divider: { height: 1, backgroundColor: Colors.divider, marginBottom: 12 },
+  dataRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  dataItem: { paddingHorizontal: Space.sm },
+  dataLabel: { fontSize: 10, color: Colors.textMuted, marginBottom: 2 },
+  dataValue: { ...Type.mono, fontSize: 13, color: Colors.textPrimary },
+  vDivider: { width: 1, height: 28, backgroundColor: Colors.border },
 });
