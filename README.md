@@ -4,7 +4,16 @@ Site-specific seismic hazard assessment and structural material recommendation f
 
 `React Native` · `Expo SDK 56` · `FastAPI` · `Python 3.11` · `Deployed on Render` · `IS 1893:2016 compliant` · `SRIC Internship · IIT Kharagpur`
 
-> 📲 **[Download Android APK](#)** — link to be added
+> 📲 **[Download Android APK](https://expo.dev/accounts/sh_iit_26/projects/geosafe/builds/7046f0d2-975a-4a89-9bbf-89b93b9525dd)**
+
+<p align="center">
+  <img src="docs/screenshots/Home.jpeg" width="180" alt="Home"/>
+  <img src="docs/screenshots/ResultOverviewGuwahati.jpeg" width="180" alt="Results"/>
+  <img src="docs/screenshots/MaterialRecommendation.jpeg" width="180" alt="Materials"/>
+  <img src="docs/screenshots/HazardOverviewSample.jpeg" width="180" alt="Hazard overview"/>
+  <img src="docs/screenshots/DesignGuidelines.jpeg" width="180" alt="Guidelines"/>
+  <img src="docs/screenshots/Map.jpeg" width="180" alt="Map"/>
+</p>
 
 Indian seismic design practice assigns a site one of four IS 1893 zone labels and stops there — the same label applies whether a building is three storeys or fifteen, and whether the underlying soil amplifies ground motion or damps it. GeoSafe decomposes hazard into bedrock motion, site amplification, and structural vulnerability as three separate, independently-sourced terms, and reports a confidence tier alongside every value it returns, so a zone label is never mistaken for a site-specific measurement.
 
